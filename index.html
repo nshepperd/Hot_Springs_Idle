@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en" style="height:100%;overflow:auto;">
+<head>
+    <meta charset="UTF-8">
+    <!-- to force a reload -->
+    <meta http-equiv="cache-control" content="max-age=0" />
+    <meta http-equiv="cache-control" content="no-cache" />
+    <meta http-equiv="expires" content="0" />
+    <meta http-equiv="expires" content="Tue, 01 Jan 1980 1:00:00 GMT" />
+    <meta http-equiv="pragma" content="no-cache" />
+    <meta name="viewport" content="width=device-width, initial-scale=.8">
+
+    <title>Hot Spring Loops</title>
+    <link rel="stylesheet" href="stylesheet.css">
+</head>
+<body id="theBody" oncontextmenu="return false;" style="padding:5px" class="medium">
+
+
+<div id="bonusDisplay" style="border:1px solid var(--border-color);position:absolute;display:none;flex-direction:row;left:20px;bottom:55px;padding:10px;margin:5px;background-color:var(--overlay-color);color:var(--text-primary);width:auto;">
+    <div style="width:230px;margin-right:10px;display:flex;flex-direction:column;gap:5px;">
+        <span id="bonusDisplayHideButton" class="button" style="position:absolute;left:460px;top:-13px;padding:5px 8px;" onclick="bonusMenuHideButton()"><<</span>
+        <div>Bonus Time: <b><span id="bonusTime"></span></b></div>
+
+        <div id="toggleBonusSpeedButton" class="button" onclick="toggleBonusSpeed()" style="background-color: red; text-align:center;">Enable Bonus Speed</div>
+
+        <div>Bonus Speed:
+            <label><input type="radio" onchange="changeBonusSpeed(3)" name="bonusSpeed" value="3x" checked> 3x</label>
+            <label><input type="radio" onchange="changeBonusSpeed(10)" name="bonusSpeed" value="10x"> 10x</label>
+            <span id="bonus50" style="display:none"><label><input type="radio" onchange="changeBonusSpeed(50)" name="bonusSpeed" value="50x"> 50x</label></span>
+        </div>
+    </div>
+
+    <div style="width:230px; border-left:1px solid var(--border-color); padding-left:10px; display:flex; flex-direction:column; gap:5px;">
+        <div>Instant Bonus Time: <span id="instantBonusTime">0:00:00</span></div>
+        <div style="font-weight:bold; text-align:center;">Fast Forward</div>
+        <div style="display:flex; justify-content:space-between; gap:2px;">
+            <div id="skipTime1" class="button" onclick="driver.skipTime(1)" style="background-color:darkblue;flex:1;text-align:center;font-size:12px;">1 minute</div>
+            <div id="skipTime10" class="button" onclick="driver.skipTime(10)" style="background-color:darkblue;flex:1;text-align:center;font-size:12px;">10 minutes</div>
+            <div id="skipTime60" class="button" onclick="driver.skipTime(60)" style="background-color:darkblue;flex:1;text-align:center;font-size:12px;display:none;">60 minutes</div>
+        </div>
+
+        <div id="convertBtn" class="button" onclick="convertBonusTime()" style="background-color: green; text-align:center;">Convert 2 hours</div>
+    </div>
+</div>
+
+<div id="mainLayout">
+    <div id="gameProgressBars" class="game-progress-bars">
+        <div id="okamiProgressBar" class="game-progress-bar">
+            <div class="prog-track game-progress-track okami-progress-track">
+                <div id="okamiExpFill" class="prog-fill prog-fill-okami-exp"></div>
+                <div class="game-progress-bar-label">
+                    <span id="okamiTailLabel" class="game-progress-bold">One Tail</span> - Level <span id="okamiLevelText" class="game-progress-bold">0</span><span class="game-progress-sep">|</span>Exp: <span id="okamiExpText" class="game-progress-bold">0 / 200</span><span class="game-progress-sep">|</span>Spirit Strands: <span id="okamiSpiritStrands" class="game-progress-bold">1</span><span id="okamiSpiritStrandsNext" class="muted-text"></span><span class="game-progress-sep">|</span>Inspiration Bonus: <span id="okamiInspirationBonus" class="game-progress-bold">x1.2</span> <span id="okamiInspirationHint" class="muted-text">(+.02/level)</span><span class="game-progress-sep">|</span>Currently: <span id="okamiStateDisplay" class="okami-state-display game-progress-bold" onclick="events.goToOkamiAssignment(event)">Idling</span>
+                </div>
+            </div>
+        </div>
+        <div id="manaProgressBar" class="game-progress-bar" style="display:none">
+            <div class="prog-track game-progress-track mana-progress-track">
+                <div id="manaFill" class="prog-fill prog-fill-mana"></div>
+                <div class="game-progress-bar-label"><img class="inline-res-icon" src="img/mana.svg" alt="" draggable="false">Mana: <span id="manaAmount" class="game-progress-bold">0</span>/<span id="manaCap" class="game-progress-bold">1000</span><span class="game-progress-sep">|</span>+<span id="manaRate" class="game-progress-bold">0</span>/s<span id="manaRateArchiveDrain"></span><span class="game-progress-sep">|</span>ETA: <span id="manaEtaText">—</span></div>
+            </div>
+        </div>
+        <div id="divinityProgressBar" class="game-progress-bar" style="display:none">
+            <div class="prog-track game-progress-track divinity-progress-track">
+                <div id="divinityFill" class="prog-fill prog-fill-divinity"></div>
+                <div class="game-progress-bar-label">Divinity: <span id="divinityAmount" class="game-progress-bold">0</span>/<span id="divinityCap" class="game-progress-bold">100000</span><span class="game-progress-sep">|</span>+<span id="divinityRate" class="game-progress-bold">0</span>/s</div>
+            </div>
+        </div>
+    </div>
+    <div id="compactViewTabs">
+        <button id="compactPane_menus" class="tab-button" onclick="events.switchCompactPane('menus')">Menus</button>
+        <button id="compactPane_battle" class="tab-button" onclick="events.switchCompactPane('battle')">Battle</button>
+    </div>
+    <div id="gameColumnsRow" class="game-columns-row">
+    <div id="menuColumn" class="game-column">
+        <div id="menuTabs">
+            <button id="tabButton_base" class="tab-button" onclick="events.switchTab('base')">Resort</button>
+            <button id="tabButton_guests" class="tab-button" onclick="events.switchTab('guests')">Guests</button>
+            <button id="tabButton_leveling" class="tab-button" onclick="events.switchTab('leveling')">Leveling</button>
+            <button id="tabButton_stats" class="tab-button" onclick="events.switchTab('stats')">Stats</button>
+            <button id="tabButton_skills" class="tab-button" onclick="events.switchTab('skills')">Skills</button>
+            <button id="tabButton_travel" class="tab-button" onclick="events.switchTab('travel')">Travel</button>
+            <button id="tabButton_history" class="tab-button" onclick="events.switchTab('history')">History</button>
+            <button id="tabButton_cardBonuses" class="tab-button" onclick="events.switchTab('cardBonuses')" style="display:none">Card Bonuses</button>
+            <button id="tabButton_options" class="tab-button" onclick="events.switchTab('options')">Options</button>
+        </div>
+        <div id="menuContent">
+            <div id="tabPane_base" class="tab-pane">
+                <div class="pane-title"><span class="pane-title-left"><span class="showthat" onmouseenter="events.refreshKitsuneAssignmentTooltip()"><img class="inline-res-icon" src="img/foxWorker.svg" alt="" draggable="false"> Kitsune <span id="baseWorkersAssigned"></span>/<span id="baseWorkersFound"></span><div id="kitsuneAssignTooltip" class="showthis kitsune-assign-tooltip"><div id="kitsuneAssignTooltipList"></div></div></span><span id="basePaneTitleCoins"> | <img class="inline-res-icon" src="img/coins.svg" alt="" draggable="false">Coins: <span id="baseCoinsText"></span></span><span id="basePaneTitleStarBeads"> | <img class="inline-res-icon" src="img/starBead.svg" alt="" draggable="false">Star Beads: <span id="baseStarBeadsText"></span></span></span><span id="baseBuyableWrap" class="showthat pane-title-buyable" style="display:none" onmouseenter="events.setBuyableTooltipOpen(true)" onmouseleave="events.setBuyableTooltipOpen(false)">Buyable: <span id="baseBuyableCount">0</span><div id="baseBuyableTooltip" class="showthis kitsune-assign-tooltip"><div id="baseBuyableTooltipList"></div></div></span></div>
+                <div id="baseResortMap" class="base-map-wrap">
+                    <div class="resort-map-cave" aria-hidden="true"></div>
+                    <svg id="dirtRoadLayer" class="dirt-road-svg" aria-hidden="true"></svg>
+                    <div id="dirtRoadHoverLayer" class="dirt-road-hover-layer"></div>
+                    <div id="dirtRoadMouseTip" class="dirt-road-mouse-tip" style="display:none"></div>
+                    <div id="constructionMouseTip" class="dirt-road-mouse-tip" style="display:none"></div>
+                    <div id="foxDenQueueTip" class="dirt-road-mouse-tip" style="display:none"></div>
+                    <button id="baseBuilding_foxDen" class="base-building-label resort-building-label resort-building-map-btn resort-building-fox-den" onclick="events.selectBaseBuilding('foxDen')">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/den.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Fox Den</span>
+                        <span id="foxDenMapDisplay" class="resort-building-display"></span>
+                    </button>
+                    <button id="baseBuilding_hiddenSpring" class="base-building-label resort-building-label resort-building-hidden-spring map-building-locked" onclick="events.selectBaseBuilding('hiddenSpring')"><img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false"><span class="resort-building-label-text" style="font-size:15px">Hidden Spring</span></button>
+                    <div id="mapHiddenSpringManaProgressWrap" class="base-mini-progress resort-map-progress resort-map-progress-hidden-spring-mana" style="display:none"><div id="mapHiddenSpringManaProgressFill" class="base-mini-progress-fill prog-fill-mana"></div></div>
+                    <div id="spiritSlots_spiritTraining" class="spirit-slot-grid spirit-slot-grid-training" style="display:none">
+                        <div id="spiritSlot_spiritTraining_any_0" class="spirit-slot spirit-slot-training" data-spirit-kind="any" data-spirit-location="spiritTraining" data-spirit-slot="0" onclick="events.clickSpiritTrainingSlot()"></div>
+                    </div>
+                    <div id="spiritSlots_earth" class="spirit-slot-grid spirit-slot-grid-earth"></div>
+                    <div id="spiritSlots_water" class="spirit-slot-grid spirit-slot-grid-water" style="display:none"></div>
+                    <button id="baseBuilding_mine" class="base-building-label resort-building-label resort-building-map-btn resort-building-mine" onclick="events.selectBaseBuilding('mine')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/mine.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Mine</span>
+                    </button>
+                    <div id="spiritSlots_mine_earth" class="spirit-slot-grid spirit-slot-grid-mine-earth" style="display:none"></div>
+                    <button id="baseBuilding_laundry" class="base-building-label resort-building-label resort-building-map-btn resort-building-laundry" onclick="events.selectBaseBuilding('laundry')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/laundry.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Laundry Basins</span>
+                    </button>
+                    <div id="mapLaundryProgressWrap" class="base-mini-progress resort-map-progress resort-map-progress-laundry" style="display:none"><div id="mapLaundryProgressFill" class="base-mini-progress-fill"></div></div>
+                    <button id="baseBuilding_inn" class="base-building-label resort-building-label resort-building-map-btn resort-building-inn" onclick="events.selectBaseBuilding('inn')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <span class="resort-building-art inn-map-art-row">
+                            <img class="inn-map-icon" src="img/inn.svg" alt="" draggable="false">
+                            <img class="inn-map-icon inn-map-onsen-art" src="img/onsen.svg" alt="" draggable="false">
+                        </span>
+                        <span id="innMapLabelText" class="resort-building-label-text">Tatami Inn</span>
+                        <span id="innMapDisplay" class="resort-building-display"></span>
+                    </button>
+                    <div id="mapInnManaProgressWrap" class="base-mini-progress resort-map-progress resort-map-progress-inn-mana" style="display:none"><div id="mapInnManaProgressFill" class="base-mini-progress-fill prog-fill-mana"></div></div>
+                    <div id="mapInnWaterProgressWrap" class="base-mini-progress resort-map-progress resort-map-progress-inn-water" style="display:none"><div id="mapInnWaterProgressFill" class="base-mini-progress-fill prog-fill-water"></div></div>
+                    <button id="baseBuilding_bonfire" class="base-building-label resort-building-label resort-building-map-btn resort-building-bonfire" onclick="events.selectBaseBuilding('bonfire')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/bonfire.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Bonfire</span>
+                    </button>
+                    <div id="spiritSlots_bonfire_fire" class="spirit-slot-grid spirit-slot-grid-bonfire-fire" style="display:none"></div>
+                    <button id="baseBuilding_garden" class="base-building-label resort-building-label resort-building-map-btn resort-building-garden" onclick="events.selectBaseBuilding('garden')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/garden.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Rock Garden</span>
+                    </button>
+                    <button id="baseBuilding_atelier" class="base-building-label resort-building-label resort-building-map-btn resort-building-atelier" onclick="events.selectBaseBuilding('atelier')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/atelier.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Atelier</span>
+                        <span id="atelierMapDisplay" class="resort-building-display"></span>
+                    </button>
+                    <div id="spiritSlots_atelier_fire" class="spirit-slot-grid spirit-slot-grid-atelier-fire" style="display:none"></div>
+                    <button id="baseBuilding_scrollArchives" class="base-building-label resort-building-label resort-building-map-btn resort-building-scrollArchives" onclick="events.selectBaseBuilding('scrollArchives')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/archives.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Scroll Archives</span>
+                    </button>
+                    <button id="baseBuilding_noodleBar" class="base-building-label resort-building-label resort-building-map-btn resort-building-noodleBar" onclick="events.selectBaseBuilding('noodleBar')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/noodle.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Noodle Bar</span>
+                    </button>
+                    <div id="mapNoodleTipProgressWrap" class="base-mini-progress resort-map-progress resort-map-progress-noodle-tip" style="display:none"><div id="mapNoodleTipProgressFill" class="base-mini-progress-fill prog-fill-noodle-tip"></div></div>
+                    <div id="mapNoodleWaterProgressWrap" class="base-mini-progress resort-map-progress resort-map-progress-noodle-water" style="display:none"><div id="mapNoodleWaterProgressFill" class="base-mini-progress-fill prog-fill-water"></div></div>
+                    <button id="baseBuilding_market" class="base-building-label resort-building-label resort-building-map-btn resort-building-market" onclick="events.selectBaseBuilding('market')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/market.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Market</span>
+                        <span id="marketMapDisplay" class="resort-building-display">0</span>
+                    </button>
+                    <div id="mapMarketProgressWrap" class="base-mini-progress resort-map-progress resort-map-progress-market" style="display:none"><div id="mapMarketProgressFill" class="base-mini-progress-fill prog-fill-market-exp"></div></div>
+                    <button id="baseBuilding_mage_tower" class="base-building-label resort-building-label resort-building-map-btn resort-building-mage-tower" onclick="events.selectBaseBuilding('mage_tower')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/orb.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">The Orb</span>
+                        <span id="mageTowerMapDisplay" class="resort-building-display">0</span>
+                    </button>
+                    <div id="mapOrbProgressWrap" class="base-mini-progress resort-map-progress resort-map-progress-orb" style="display:none"><div id="mapOrbProgressFill" class="base-mini-progress-fill prog-fill-orb-exp"></div></div>
+                    <button id="baseBuilding_shrine" class="base-building-label resort-building-label resort-building-map-btn resort-building-shrine" onclick="events.selectBaseBuilding('shrine')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/shrine.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Shrine</span>
+                        <span id="shrineMapDisplay" class="resort-building-display">0</span>
+                    </button>
+                    <div id="mapShrineProgressWrap" class="base-mini-progress resort-map-progress resort-map-progress-shrine" style="display:none"><div id="mapShrineProgressFill" class="base-mini-progress-fill prog-fill-karma"></div></div>
+                    <button id="baseBuilding_torii" class="base-building-label resort-building-label resort-building-map-btn resort-building-torii" onclick="events.selectBaseBuilding('torii')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/torii.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Zenko Torii Gate</span>
+                        <span id="toriiMapDisplay" class="resort-building-display"></span>
+                    </button>
+                    <div id="mapToriiProgressWrap" class="base-mini-progress resort-map-progress resort-map-progress-torii" style="display:none"><div id="mapToriiProgressFill" class="base-mini-progress-fill"></div></div>
+                    <div id="mapToriiManaProgressWrap" class="base-mini-progress resort-map-progress resort-map-progress-torii-mana" style="display:none"><div id="mapToriiManaProgressFill" class="base-mini-progress-fill prog-fill-mana"></div></div>
+                    <div id="mapToriiWaterProgressWrap" class="base-mini-progress resort-map-progress resort-map-progress-torii-water" style="display:none"><div id="mapToriiWaterProgressFill" class="base-mini-progress-fill prog-fill-water"></div></div>
+                    <button id="baseBuilding_cistern" class="base-building-label resort-building-label resort-building-map-btn resort-building-cistern" onclick="events.selectBaseBuilding('cistern')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/cistern.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Cistern</span>
+                        <span id="cisternMapValue" class="resort-building-display"></span>
+                    </button>
+                    <button id="baseBuilding_pond" class="base-building-label resort-building-label resort-building-map-btn resort-building-pond" onclick="events.selectBaseBuilding('pond')" style="display:none">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/pond.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Pond</span>
+                    </button>
+                    <button id="baseBuilding_stonePile" class="base-building-label resort-building-label resort-building-map-btn resort-building-stone-pile" onclick="events.selectBaseBuilding('stonePile')">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/pile.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Stone Pile</span>
+                        <span id="stonePileMapValue" class="resort-building-display">0</span>
+                    </button>
+                    <div id="mapStonePileManaProgressWrap" class="base-mini-progress resort-map-progress resort-map-progress-stone-pile-mana" style="display:none"><div id="mapStonePileManaProgressFill" class="base-mini-progress-fill prog-fill-mana"></div></div>
+                    <button id="baseBuilding_bambooForest" class="base-building-label resort-building-label resort-building-map-btn resort-building-bamboo" onclick="events.selectBaseBuilding('bambooForest')">
+                        <img class="okami-site-tail" src="img/foxTail.svg" alt="" draggable="false">
+                        <img class="resort-building-art" src="img/bamboo.svg" alt="" draggable="false">
+                        <span class="resort-building-label-text">Bamboo Forest</span>
+                        <span id="bambooForestMapDisplay" class="resort-building-display">0</span>
+                    </button>
+                    <div id="spiritSlots_bambooForest_plant" class="spirit-slot-grid spirit-slot-grid-bamboo-plant" style="display:none"></div>
+                    <div id="spiritSlots_pond_water" class="spirit-slot-grid spirit-slot-grid-pond-water" style="display:none"></div>
+                    <div id="foxDenMapSlotPool"></div>
+                    <div id="pebbleMapPool"></div>
+                    <div id="fireLauncher_pathMid_wrap" class="fire-launcher-wrap fire-launcher-pathMid" style="display:none" onclick="events.clickFireLauncher('pathMid')">
+                        <div id="spiritSlot_fireLauncher_pathMid_0" class="spirit-slot spirit-slot-fire fire-launcher-slot" data-spirit-kind="fire" data-spirit-location="fireLauncher_pathMid" data-spirit-slot="0" onclick="event.stopPropagation(); events.clickFireLauncherSlot('pathMid')">
+                            <div id="fireLauncher_pathMid_range" class="fire-launcher-range"></div>
+                        </div>
+                        <div class="fire-launcher-ember-track"><div id="fireLauncher_pathMid_emberFill" class="fire-launcher-ember-fill"></div></div>
+                    </div>
+                    <div id="fireLauncher_bendTop_wrap" class="fire-launcher-wrap fire-launcher-bendTop" style="display:none" onclick="events.clickFireLauncher('bendTop')">
+                        <div id="spiritSlot_fireLauncher_bendTop_0" class="spirit-slot spirit-slot-fire fire-launcher-slot" data-spirit-kind="fire" data-spirit-location="fireLauncher_bendTop" data-spirit-slot="0" onclick="event.stopPropagation(); events.clickFireLauncherSlot('bendTop')">
+                            <div id="fireLauncher_bendTop_range" class="fire-launcher-range"></div>
+                        </div>
+                        <div class="fire-launcher-ember-track"><div id="fireLauncher_bendTop_emberFill" class="fire-launcher-ember-fill"></div></div>
+                    </div>
+                    <div id="fireLauncher_pathLower_wrap" class="fire-launcher-wrap fire-launcher-pathLower" style="display:none" onclick="events.clickFireLauncher('pathLower')">
+                        <div id="spiritSlot_fireLauncher_pathLower_0" class="spirit-slot spirit-slot-fire fire-launcher-slot" data-spirit-kind="fire" data-spirit-location="fireLauncher_pathLower" data-spirit-slot="0" onclick="event.stopPropagation(); events.clickFireLauncherSlot('pathLower')">
+                            <div id="fireLauncher_pathLower_range" class="fire-launcher-range"></div>
+                        </div>
+                        <div class="fire-launcher-ember-track"><div id="fireLauncher_pathLower_emberFill" class="fire-launcher-ember-fill"></div></div>
+                    </div>
+
+                    <svg class="resort-path-svg" viewBox="0 0 668 690" preserveAspectRatio="none" aria-hidden="true">
+                        <path class="resort-path-track" d=""></path>
+                        <path class="resort-path-hollow" d=""></path>
+                        <g id="pathSegmentTrackLayer"></g>
+                        <g id="pathSegmentHollowLayer"></g>
+                        <g id="pathSegmentHitLayer"></g>
+                        <g id="pathSegmentHighlightLayer"></g>
+                    </svg>
+                </div>
+            </div>
+
+            <div id="tabPane_guests" class="tab-pane">
+                <div class="pane-title">Guests</div>
+                <div id="guestsList" class="guests-list"></div>
+            </div>
+
+            <div id="tabPane_leveling" class="tab-pane">
+                <div class="pane-title">Leveling</div>
+                <div class="muted-text">Class: <span id="currentClassText"></span> (<span id="classPerLevelText"></span>)</div>
+                <div class="leveling-header-row"><div class="leveling-kv">Level <span id="levelText"></span></div><div id="levelingPointsWrap" class="leveling-kv">Points <span id="attributePointsText"></span></div></div>
+                <div class="prog-label-row">Exp <span id="levelExpText"></span></div>
+                <div class="prog-track"><div id="levelTabExpFill" class="prog-fill prog-fill-level"></div></div>
+                <div class="leveling-stat-grid">
+                    <div class="leveling-stat-card showthat">
+                        <div class="leveling-stat-name">Bru</div>
+                        <div class="leveling-stat-val" id="strText"></div>
+                        <div class="showthis" id="strStatTip">Brutality - +10% damage per point.<br>Damage is always rounded up.</div>
+                    </div>
+                    <div class="leveling-stat-card showthat">
+                        <div class="leveling-stat-name">Con</div>
+                        <div class="leveling-stat-val" id="conText"></div>
+                        <div class="showthis" id="conStatTip">Confidence - +10% current and max Aud per point</div>
+                    </div>
+                    <div class="leveling-stat-card showthat">
+                        <div class="leveling-stat-name">Spd</div>
+                        <div class="leveling-stat-val" id="spdText"></div>
+                        <div class="showthis">+10% move speed per point</div>
+                    </div>
+                    <div class="leveling-stat-card showthat">
+                        <div class="leveling-stat-name">Soul</div>
+                        <div class="leveling-stat-val" id="soulText"></div>
+                        <div class="showthis" id="soulStatTip"></div>
+                    </div>
+                </div>
+                <div id="levelingAssignButtons" class="row-buttons row-buttons-wrap">
+                    <button class="tab-button" onclick="events.assignAttribute('str')">+ Bru</button>
+                    <button class="tab-button" onclick="events.assignAttribute('con')">+ Con</button>
+                    <button class="tab-button" onclick="events.assignAttribute('spd')">+ Spd</button>
+                    <button class="tab-button" onclick="events.assignAttribute('soul')">+ Soul</button>
+                    <button class="tab-button" onclick="events.clearAttributePlan()">Clear Plan</button>
+                </div>
+                <div id="attributePlanTitle" class="pane-subtitle attribute-plan-title-row" style="display:none">
+                    <span>Attribute Plan</span>
+                    <span id="attributePlanHighest" class="muted-text"></span>
+                    <span id="attributePlanPending" class="muted-text" style="display:none">Applying changes on next clone...</span>
+                </div>
+                <div id="attributePlanList" class="plan-list"></div>
+            </div>
+
+            <div id="tabPane_skills" class="tab-pane">
+                <div class="pane-title">Skills</div>
+                <div class="row-buttons">
+                    <button id="skillSubTab_combat" class="tab-button" onclick="events.switchSkillsTab('combat')">Combat</button>
+                    <button id="skillSubTab_foraging" class="tab-button" onclick="events.switchSkillsTab('foraging')">Foraging</button>
+                    <button id="skillSubTab_class" class="tab-button" onclick="events.switchSkillsTab('class')">Class</button>
+                </div>
+                <div id="combatStarsInventory" class="base-row" style="display:none">
+                    <div id="combatStarsCounts"></div>
+                    <div class="muted-text">Stars are gained by progressing far enough in a map. They can be assigned and unassigned freely. Each star assigned to a skill multiplies that skill's exp gain by x1.5 (stacks multiplicatively).</div>
+                </div>
+                <div id="skillsList"></div>
+            </div>
+            <div id="tabPane_stats" class="tab-pane">
+                <div class="pane-title">Stats</div>
+                <div class="leveling-stat-grid">
+                    <div class="leveling-stat-card showthat"><div class="leveling-stat-name">Audacity</div><div class="leveling-stat-val" id="statsAudText"></div><div class="showthis" id="statsAudTip"></div></div>
+                    <div id="statsRegenCard" class="leveling-stat-card showthat"><div class="leveling-stat-name">Regen</div><div class="leveling-stat-val" id="statsRegenText"></div><div class="showthis" id="statsRegenTip"></div></div>
+                    <div class="leveling-stat-card showthat"><div class="leveling-stat-name">Shame Attack</div><div class="leveling-stat-val" id="statsAttackText"></div><div class="showthis" id="statsAttackTip"></div></div>
+                    <div id="statsArmorCard" class="leveling-stat-card showthat"><div class="leveling-stat-name">Armor</div><div class="leveling-stat-val" id="statsArmorText"></div><div class="showthis" id="statsArmorTip"></div></div>
+                    <div class="leveling-stat-card showthat"><div class="leveling-stat-name">Slap Speed</div><div class="leveling-stat-val" id="statsSlapText"></div><div class="showthis" id="statsSlapTip"></div></div>
+                    <div id="statsSandalCard" class="leveling-stat-card showthat"><div class="leveling-stat-name">Sandal Throw Speed</div><div class="leveling-stat-val" id="statsSandalText"></div><div class="showthis" id="statsSandalTip"></div></div>
+                </div>
+            </div>
+
+            <div id="tabPane_travel" class="tab-pane">
+                <div class="pane-title">Travel</div>
+                <div class="travel-launch-row row-buttons">
+                    <button type="button" id="travelBonfireLaunchBtn" class="tab-button" onclick="events.startTravelWithBonfireSettings()">Travel with Bonfire settings for <span id="travelBonfireManaCost">0 mana</span></button>
+                    <button type="button" id="travelGoBonfireBtn" class="tab-button" onclick="events.goToBonfire()">Go to Bonfire</button>
+                </div>
+                <div id="travelVentingSurplus_row" class="base-row" style="display:none"><label><input type="checkbox" id="travelVentingSurplus_chk" checked onchange="events.toggleVentingSurplus(this.checked)"> Start When Full Mana</label></div>
+                <div class="travel-subtabs-row">
+                    <button type="button" id="travelSubTab_maps" class="tab-button travel-subtab-btn" onclick="events.switchTravelSubTab('maps')">Maps</button>
+                    <button type="button" id="travelSubTab_challenges" class="tab-button travel-subtab-btn" onclick="events.switchTravelSubTab('challenges')">Challenges</button>
+                </div>
+                <div id="travelPane_maps" class="travel-pane-maps"></div>
+                <div id="travelPane_challenges" class="travel-pane-challenges" style="display:none"></div>
+            </div>
+
+            <div id="tabPane_history" class="tab-pane">
+                <div class="pane-title">History</div>
+                <div id="historyList"></div>
+            </div>
+            <div id="tabPane_cardBonuses" class="tab-pane" style="display:none">
+                <div class="pane-title">Card Bonuses</div>
+                <div id="cardBonusesEmpty" class="muted-text">No cards received yet.</div>
+                <div id="cardBonusesList" class="card-bonuses-list"></div>
+            </div>
+            <div id="tabPane_options" class="tab-pane">
+                <div class="pane-title">Options</div>
+                <div class="options-row"><button type="button" id="changelogButton" class="tab-button" onclick="changelog.open()">Changelog</button></div>
+                <div id="levelingPlayStats" class="options-row leveling-play-stats muted-text">Time played: <span id="playTimeClock">0:00:00</span></div>
+                <div class="options-row"><button type="button" id="manualSaveButton" class="tab-button" onclick="saving.save()">Save now</button><button type="button" id="viewTipsButton" class="tab-button" onclick="toasts.openTips()">View Tips</button></div>
+                <div class="options-row" id="saveToFileRow"><button type="button" id="saveToFileButton" class="tab-button" onclick="saving.saveToFile()">Save to file</button><button type="button" id="importFromFileButton" class="tab-button" onclick="saving.importFromFile()">Import from file</button><input type="file" id="importFromFileInput" style="display:none" onchange="saving.onImportFromFileSelected(this)"></div>
+                <label class="options-row"><input type="checkbox" id="hideMaxedUpgradesToggle" onchange="events.setHideMaxedUpgrades(this.checked)"> Hide maxed upgrades</label>
+                <label class="options-row"><input type="checkbox" id="disableCompactLayoutToggle" onchange="events.setDisableCompactLayout(this.checked)"> Always use side-by-side layout</label>
+                <div class="options-row">Number format:</div>
+                <label class="options-row"><input type="radio" id="numberTypeSuffix" name="numberType" value="numberSuffix" onchange="events.setNumberType('numberSuffix')"> Suffix (1.23K)</label>
+                <label class="options-row"><input type="radio" id="numberTypeScientific" name="numberType" value="scientific" onchange="events.setNumberType('scientific')"> Scientific</label>
+                <label class="options-row"><input type="radio" id="numberTypeEngineering" name="numberType" value="engineering" onchange="events.setNumberType('engineering')"> Engineering</label>
+                <div class="options-row options-separator"></div>
+                <label class="options-row"><input type="radio" id="offlineModeCatchUp" name="offlineProgressMode" value="catchUp" onchange="events.setOfflineProgressMode('catchUp')" checked> Keep game running offline (100% speed up to 24hrs)</label>
+                <label class="options-row"><input type="radio" id="offlineModePauseBonus" name="offlineProgressMode" value="pauseBonus" onchange="events.setOfflineProgressMode('pauseBonus')"> Pause game while offline, gain 1 minute of x2 speed every 5 minutes, up to 6 hours bonus</label>
+                <div class="options-row options-separator"></div>
+                <div class="options-row">Hotkeys</div>
+                <div class="options-row muted-text">Right-click a building: assign/unassign the Okami</div>
+                <div class="options-row muted-text">Shift+click a building: assign 1 Kitsune</div>
+                <div class="options-row muted-text">Shift+right-click a building: unassign 1 Kitsune</div>
+            </div>
+        </div>
+    </div>
+    <div id="battleColumn" class="game-column" style="display:none">
+        <div id="battlefieldWrap">
+            <button type="button" id="battleEndRunBtn" class="battle-end-run-btn" onclick="events.endRunNow()" title="End run (set Aud to 0)">End run</button>
+            <div id="battlefield">
+                <div id="waveInfo"></div>
+                <div id="rangeMarkers"></div>
+                <div id="attackLines"></div>
+                <div id="slapFxLayer">
+                    <img id="slapHandOuter" class="slap-hand-img" src="img/hand_outer.svg" alt="" draggable="false">
+                    <img id="slapHandSide" class="slap-hand-img" src="img/hand_side_right.svg" alt="" draggable="false">
+                    <img id="slapHandInner" class="slap-hand-img" src="img/hand_inner.svg" alt="" draggable="false">
+                </div>
+                <div id="playerBuffRow" class="player-buff-row" aria-label="Battle buffs"></div>
+                <div id="playerStack">
+                    <div id="playerAvatarWrap">
+                        <div id="playerMovePulse"></div>
+                        <div id="playerToken">
+                            <div id="playerTokenAudLayer"><div id="playerTokenAudFill"></div></div>
+                        </div>
+                        <div id="playerTokenOverlay" class="player-token-overlay intruder-overlay">
+                            <div id="playerStatAudLine" class="intruder-stat-aud" style="top:30px"></div>
+                            <div id="playerStatDmgLine" class="intruder-stat-dmg"></div>
+                        </div>
+                    </div>
+                    <div id="playerBarsRowTop" class="player-bars-row">
+                        <div id="playerAttackBar" class="player-bar-block">
+                            <div class="player-bar-label" id="playerAttackBarLabel"></div>
+                            <div class="prog-track player-prog-track"><div id="playerAttackBarFill" class="prog-fill prog-fill-attack"></div></div>
+                        </div>
+                        <div id="playerClassBarA" class="player-bar-block">
+                            <div class="player-bar-label" id="playerClassBarALabel"></div>
+                            <div class="prog-track player-prog-track"><div id="playerClassBarAFill" class="prog-fill prog-fill-skill"></div></div>
+                        </div>
+                    </div>
+                    <div id="playerBarsRowMid" class="player-bars-row">
+                        <div id="playerSandalBar" class="player-bar-block">
+                            <div class="player-bar-label" id="playerSandalBarLabel"></div>
+                            <div id="playerSandalBarTrack" class="prog-track player-prog-track"><div id="playerSandalBarFill" class="prog-fill prog-fill-sandal"></div></div>
+                        </div>
+                        <div id="playerClassBarB" class="player-bar-block">
+                            <div class="player-bar-label" id="playerClassBarBLabel"></div>
+                            <div class="prog-track player-prog-track"><div id="playerClassBarBFill" class="prog-fill prog-fill-talent"></div></div>
+                        </div>
+                    </div>
+                    <div id="playerLevelBar" class="player-bar-block">
+                        <div class="player-bar-label" id="playerLevelBarLabel"></div>
+                        <div class="prog-track player-prog-track"><div id="playerLevelBarFill" class="prog-fill prog-fill-level"></div></div>
+                    </div>
+                </div>
+            </div>
+            <div id="deathOverlay" style="display:none;">
+                <div id="deathTitle">The clone has dispersed in embarrasment (no Aud).</div>
+                <div id="deathManaBonus" class="muted-text"></div>
+                <div id="deathSummary"></div>
+                <div id="deathTalentDetails" class="death-talent-block"></div>
+                <button id="tryAgainButton" onclick="events.tryAgain()">Try Again?</button>
+            </div>
+        </div>
+        <div id="battleHud">
+            <div class="battle-hud-row">Secondary Player Stats: <span id="playerBattleHudSecondary"></span></div>
+            <div id="sandalAttackWrap" class="battle-hud-row battle-hud-toggle-row">
+                <label class="sandal-toggle-label"><input type="checkbox" id="sandalAttackToggle" onchange="events.setSandalAttackEnabled(this.checked)"> Sandal throws enabled</label>
+                <span id="sandalAttackLockText" class="muted-text battle-hud-hint"></span>
+                <span class="muted-text battle-hud-hint">If off: push wave when slap ready and none in slap range.</span>
+            </div>
+        </div>
+    </div>
+    </div>
+    <div id="baseBuildingInfo" class="base-info-panel"></div>
+</div>
+
+<div id="debugSpeedPanel" class="debug-speed-panel" style="display:none">
+    <button id="debugSpeed_x3" class="button debug-speed-btn" type="button" onclick="events.toggleDebugGameSpeed(3)">x3</button>
+    <button id="debugSpeed_x10" class="button debug-speed-btn" type="button" onclick="events.toggleDebugGameSpeed(10)">x10</button>
+    <span id="bonusSpeedLabel" class="debug-speed-label" style="display:none">Bonus Time <span id="bonusSpeedRemaining" class="muted-text"></span></span>
+    <button id="bonusSpeed_x2" class="button debug-speed-btn" type="button" style="display:none" onclick="events.toggleBonusGameSpeed(2)">x2</button>
+</div>
+
+<div id="prestigePackOverlay" style="display:none;">
+    <div id="prestigePackPanel">
+        <div id="prestigePackTitle" class="prestige-pack-title">Open Your Packs!</div>
+        <div id="prestigePackColumns" class="prestige-pack-columns">
+            <div id="prestigePackCounts" class="prestige-pack-counts"></div>
+            <div id="prestigePackPreview" class="prestige-pack-preview"></div>
+            <div id="prestigePackOdds" class="prestige-pack-odds"></div>
+        </div>
+        <div id="prestigePackCards" class="prestige-pack-cards"></div>
+        <div id="prestigePackError" class="prestige-pack-error"></div>
+        <button type="button" id="prestigePackActionBtn" class="tab-button" onclick="events.prestigePackAction()"></button>
+        <div id="prestigePackSummary" class="prestige-pack-summary" style="display:none;"></div>
+        <button type="button" id="prestigeFinishBtn" class="tab-button" style="display:none;" onclick="events.finishPrestige()">Finish Prestige</button>
+    </div>
+</div>
+
+<div id="offlineProcessingOverlay" style="display:none;">
+    <div id="offlineProcessingLabel">Processing...</div>
+    <div class="prog-track offline-processing-track">
+        <div id="offlineProcessingFill" class="prog-fill prog-fill-skill"></div>
+    </div>
+    <div id="offlineProcessingEta" class="muted-text">Estimating...</div>
+    <div id="offlineProcessingSummary" class="offline-processing-summary" style="display:none;"></div>
+    <button id="offlineProcessingDismiss" class="button" type="button" style="display:none;" onclick="offline.dismissSummary()">Continue</button>
+</div>
+
+<div id="changelogBackdrop" style="display:none" onclick="changelog.close()"></div>
+<div id="changelogPanel" style="display:none">
+    <button type="button" id="changelogPanelX" class="tutorial-toast-x" onclick="changelog.close()">X</button>
+    <div id="changelogPanelTitle">Changelog</div>
+    <div id="changelogPanelBody"></div>
+</div>
+
+</body>
+
+
+<script src="https://cdn.jsdelivr.net/npm/decimal.js@10.4.3/decimal.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js"></script>
+<script src="interval.js"></script>
+<script src="driver.js"></script>
+<script src="saving.js"></script>
+<script src="onLoad.js"></script>
+<script src="events.js"></script>
+<script src="battleBuffs.js"></script>
+<script src="engine.js"></script>
+<script src="gameData.js"></script>
+<script src="maps.js"></script>
+<script src="mapData.js"></script>
+<script src="skills.js"></script>
+<script src="shrineCards.js"></script>
+<script src="helpers.js"></script>
+<script src="resortData.js"></script>
+<script src="bonfire.js"></script>
+<script src="initialize.js"></script>
+<script src="offline.js"></script>
+<script src="viewCreate.js"></script>
+<script src="viewUpdating.js"></script>
+<script src="hotkeys.js"></script>
+<script src="toasts.js"></script>
+<script src="changelog.js"></script>
+
+
+<script>
+    if (!isSteam) {
+        const gaScript = document.createElement('script');
+        gaScript.async = true;
+        gaScript.src = 'https://www.googletagmanager.com/gtag/js?id=G-E10C6H16MH';
+        document.head.appendChild(gaScript);
+
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', 'G-E10C6H16MH');
+    }
+</script>
+
+<script>
+    driver.startGame();
+</script>
+<!--<div>Icons made by <a href="https://www.flaticon.com/authors/smashicons" title="Smashicons">Smashicons</a> from <a href="https://www.flaticon.com/" title="Flaticon">www.flaticon.com</a> is licensed by <a href="http://creativecommons.org/licenses/by/3.0/" title="Creative Commons BY 3.0" target="_blank">CC 3.0 BY</a></div>-->
+<!--<a href="http://www.onlinewebfonts.com">oNline Web Fonts</a>-->
+
+</html>
