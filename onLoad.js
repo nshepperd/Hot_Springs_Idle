@@ -363,6 +363,10 @@ let onLoad = {
             data.battle.applyTearDropsAccMs = data.battle.fakeTearDropsSecondAccMs || 0;
             delete data.battle.fakeTearDropsSecondAccMs;
         }
+        if (data.battle.scrollPx === undefined) {
+            data.battle.scrollPx = 0;
+            data.battle.prevScrollPx = 0;
+        }
 
         initialize.useStableSeeds = true;
         initialize.initializeBaseContentNotify();

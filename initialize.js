@@ -604,6 +604,8 @@ let initials = {
             forageKindSpawnCounts: {},
             forageActiveDrainMapKey: "",
             forageMoveAccumPx: 0,
+            scrollPx: 0,
+            prevScrollPx: 0,
             intruderPool: initials.intruderPool(),
             buffs: battleBuffs.initState()
         };

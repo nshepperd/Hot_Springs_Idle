@@ -371,6 +371,8 @@
         <div id="battlefieldWrap">
             <button type="button" id="battleEndRunBtn" class="battle-end-run-btn" onclick="events.endRunNow()" title="End run (set Aud to 0)">End run</button>
             <div id="battlefield">
+                <canvas id="battleBackdrop"></canvas>
+                <canvas id="battleForeground"></canvas>
                 <div id="waveInfo"></div>
                 <div id="rangeMarkers"></div>
                 <div id="attackLines"></div>
@@ -383,12 +385,12 @@
                 <div id="playerStack">
                     <div id="playerAvatarWrap">
                         <div id="playerMovePulse"></div>
-                        <div id="playerToken">
+                        <canvas id="playerSprite"></canvas>
+                    </div>
+                    <div id="playerAudBar" class="player-bar-block">
+                        <div class="player-bar-label"><span id="playerStatAudLine"></span> · <span id="playerStatDmgLine"></span></div>
+                        <div id="playerToken" class="prog-track player-prog-track">
                             <div id="playerTokenAudLayer"><div id="playerTokenAudFill"></div></div>
-                        </div>
-                        <div id="playerTokenOverlay" class="player-token-overlay intruder-overlay">
-                            <div id="playerStatAudLine" class="intruder-stat-aud" style="top:30px"></div>
-                            <div id="playerStatDmgLine" class="intruder-stat-dmg"></div>
                         </div>
                     </div>
                     <div id="playerBarsRowTop" class="player-bars-row">
@@ -500,6 +502,8 @@
 <script src="bonfire.js"></script>
 <script src="initialize.js"></script>
 <script src="offline.js"></script>
+<script src="battleBackdrop.js"></script>
+<script src="battleSprites.js"></script>
 <script src="viewCreate.js"></script>
 <script src="viewUpdating.js"></script>
 <script src="hotkeys.js"></script>

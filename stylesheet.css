@@ -377,6 +377,23 @@ button {
     margin: 0 auto;
 }
 
+#battleBackdrop,
+#battleForeground {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+    z-index: 0;
+    pointer-events: none;
+}
+
+/* Tree tops above the intruders (z 20), below the clone's HUD. */
+#battleForeground {
+    z-index: 21;
+}
+
 .kill-reward-floater {
     position: absolute;
     z-index: 35;
@@ -412,14 +429,14 @@ button {
 
 #playerStack {
     position: absolute;
-    bottom: 10px;
+    bottom: 6px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
-    z-index: 20;
+    gap: 3px;
+    z-index: 22;
     width: min(200px, 90%);
 }
 
@@ -503,17 +520,25 @@ button {
     overflow: visible;
 }
 
-#playerToken {
+#playerSprite {
     position: absolute;
-    left: 0;
-    top: 0;
-    z-index: 1;
-    width: var(--player-token-size);
-    height: var(--player-token-size);
-    border-radius: var(--player-token-radius);
-    overflow: hidden;
-    flex-shrink: 0;
-    background: transparent;
+    left: 50%;
+    bottom: -2px;
+    width: 108px;
+    height: 108px;
+    transform: translateX(-50%);
+    z-index: 2;
+    pointer-events: none;
+}
+
+/* Aud track: first HUD row under the clone, labelled with Aud and damage like the other bars. */
+#playerToken {
+    position: relative;
+}
+
+#playerStatAudLine {
+    color: #b8f5c8;
+    font-weight: 700;
 }
 
 #playerTokenAudLayer {
@@ -531,51 +556,39 @@ button {
     inset: 0;
     border-radius: inherit;
     background: #2ad15f;
-    transform-origin: bottom center;
-    transform: scaleY(1);
+    transform-origin: left center;
+    transform: scaleX(1);
     pointer-events: none;
 }
 
-/* Sibling of #playerToken so Aud text is not clipped by the token's overflow; sits above the circle. */
-#playerTokenOverlay {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: var(--player-token-size);
-    height: var(--player-token-size);
-    z-index: 4;
-    pointer-events: none;
-    font-size: 12px;
-    gap: 0;
-    overflow: visible;
-}
-
+/* Dust kicked up at the clone's feet while she walks forward. */
 #playerMovePulse {
     position: absolute;
-    left: 0;
-    top: 0;
-    width: var(--player-token-size);
-    height: var(--player-token-size);
-    border-radius: var(--player-token-radius);
-    background: rgba(180, 210, 180, 1);
-    z-index: 0;
+    left: 50%;
+    bottom: 0;
+    width: 54px;
+    height: 16px;
+    margin-left: -27px;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(230, 215, 185, 0.55), rgba(230, 215, 185, 0));
+    z-index: 1;
     display: none;
     pointer-events: none;
 }
 
 #playerMovePulse.move-pulse-active {
     display: block;
-    animation: playerMovePulseDown 0.6s linear infinite;
+    animation: playerMovePulseDown 0.6s ease-out infinite;
 }
 
 @keyframes playerMovePulseDown {
     from {
-        opacity: 1;
-        transform: translateY(0);
+        opacity: 0.9;
+        transform: translateY(-2px) scale(0.6);
     }
     to {
         opacity: 0;
-        transform: translateY(22px);
+        transform: translateY(10px) scale(1.5);
     }
 }
 
@@ -674,30 +687,44 @@ button {
     }
 }
 
+/* Compact HUD: each label sits inside its 12px bar, so the clone's sprite stays clear of the intruder line. */
 .player-bar-block {
+    position: relative;
     width: 100%;
+    min-height: 12px;
 }
 
 .player-bars-row {
+    display: flex;
+    flex-direction: column;
     width: 100%;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
+    gap: 3px;
 }
 
 .player-bar-label {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    z-index: 2;
     font-size: 10px;
-    color: #bac2de;
-    margin-bottom: 2px;
+    line-height: 12px;
+    color: #eef1fb;
+    text-shadow: 0 0 2px #000, 0 0 3px #000, 0 1px 2px rgba(0, 0, 0, 0.9);
     text-align: center;
     white-space: nowrap;
+    pointer-events: none;
 }
 
 .player-prog-track {
-    height: 6px;
+    box-sizing: border-box;
+    height: 12px;
 }
 
-.player-prog-track .prog-fill {
+.player-prog-track .prog-fill,
+#playerTokenAudFill {
     transition: none;
+    opacity: 0.72;
 }
 
 .prog-track {
@@ -790,33 +817,30 @@ button {
 .intruder-shape-layer {
     position: absolute;
     inset: 0;
-    border: 1px solid #7f2323;
     box-sizing: border-box;
-    overflow: hidden;
+    overflow: visible;
     z-index: 1;
 }
 
-.intruder-shape-layer.intruder-token-lecher {
-    border: 1px solid #1b3f74;
-    clip-path: polygon(50% 0%, 100% 38%, 81% 100%, 19% 100%, 0% 38%);
-}
-
-.intruder-sprite-img {
+/* Procedural sprite (battleSprites.js); size/offset set per token in view.renderIntruderSprite. */
+.intruder-sprite {
     position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
     pointer-events: none;
-    z-index: 2;
+    z-index: 1;
 }
 
 .intruder-aud-layer {
     position: absolute;
-    inset: 4px;
+    left: 18%;
+    right: 18%;
+    top: 7px;
+    height: 4px;
+    border-radius: 2px;
     overflow: hidden;
     background: #1a0a2e;
+    box-shadow: 0 0 0 1px rgba(8, 4, 14, 0.85);
     pointer-events: none;
+    z-index: 2;
 }
 
 .intruder-aud-layer.intruder-aud-lecher {
@@ -829,9 +853,9 @@ button {
     right: 0;
     bottom: 0;
     height: 100%;
-    background: #6b21a8;
-    transform-origin: bottom center;
-    transform: scaleY(1);
+    background: #a855f7;
+    transform-origin: left center;
+    transform: scaleX(1);
     pointer-events: none;
 }
 

@@ -10,6 +10,14 @@ let viewData = {
     intruderElementPool: [],
     activeIntruderElements: {},
     intruderRenderCache: {},
+    battleScrollRenderPx: 0,
+    playerSpriteRender: {
+        sheet: null,
+        frame: -1,
+        aud: null,
+        flash: false,
+        flashUntilMs: 0
+    },
     guestRowSnapshots: [],
     guestRowByGuestId: {},
     guestRowFreeSlots: [],
@@ -250,7 +258,7 @@ let view = {
             view.updateVal("playerBattleHudSecondary", secondaryParts.length ? secondaryParts.join(" · ") : "-");
             const audPct = Math.max(0, Math.min(100, (data.battle.player.aud / data.battle.player.maxAud) * 100));
             const audScale = Math.round((audPct / 100) * 1000) / 1000;
-            view.updateVal("playerTokenAudFill", `scaleY(${audScale})`, "style.transform");
+            view.updateVal("playerTokenAudFill", `scaleX(${audScale})`, "style.transform");
             const growthUnlocked = bonfire.isGrowthBlessingUnlocked();
             view.updateWaveInfoPanel(runClock, growthUnlocked);
         }
@@ -5005,12 +5013,121 @@ let view = {
         view.updateVal("compactPane_battle", pane === "battle" ? "#2d4e7a" : "#1f2b3e", "style.backgroundColor");
         view.updateBaseBuildingInfoLayout();
     },
+    /** Scrolls the procedural backdrop by the clone's walked distance (interpolated like intruder positions). */
+    renderBattleBackdrop: function() {
+        if (!view.isBattleVisible()) {
+            return;
+        }
+        const map = initialize.getCurrentMapDefinition();
+        const canvas = viewData.cached.battleBackdrop;
+        if (!battleBackdrop.scene || battleBackdrop.scene.mapKey !== map.key) {
+            battleBackdrop.build(map, canvas);
+        }
+        let scroll = data.battle.scrollPx;
+        if (data.battle.state === "running" && !data.gameSettings.stop) {
+            const alpha = data.gameSettings.renderAlpha ?? 1;
+            scroll = data.battle.prevScrollPx + ((data.battle.scrollPx - data.battle.prevScrollPx) * alpha);
+        }
+        viewData.battleScrollRenderPx = scroll;
+        battleBackdrop.render(canvas, scroll, performance.now());
+    },
+    renderBattleForeground: function(holes) {
+        if (!view.isBattleVisible()) {
+            return;
+        }
+        battleBackdrop.renderForeground(viewData.cached.battleForeground, viewData.battleScrollRenderPx, performance.now(), holes);
+    },
+    /** 0-100 fill of an intruder's attack wind-up bar (0 while it cannot charge). */
+    getIntruderAttackChargePct: function(intruder) {
+        const cd = intruder.intruderType === "lecher" ? (intruder.attackCooldownMs * 2) : intruder.attackCooldownMs;
+        const canCharge = intruder.intruderType === "lecher" ? (!!intruder.lecherReady || !!intruder.inRange) : !!intruder.inRange;
+        const remain = Math.max(0, Math.min(cd, intruder.attackTimerMs || 0));
+        return canCharge ? (100 - Math.max(0, Math.min(100, (remain / cd) * 100))) : 0;
+    },
+    /** Picks idle / walk / wind-up frames. Walking is judged against the ground, so pushed-back intruders do not walk. */
+    renderIntruderSprite: function(intruder, spriteEl, renderCache, renderY, nowMs, map) {
+        const type = intruder.intruderType;
+        const isForage = type === "tree" || type === "bush" || type === "ore_vein";
+        const sheet = isForage ? battleSprites.getForageSheet(type) : battleSprites.getIntruderSheet(map, type, intruder.id);
+        let frame;
+        if (isForage) {
+            frame = battleSprites.idleFrame(nowMs, intruder.id, 3);
+        } else if ((data.battle.mode || "combat") === "combat" && view.getIntruderAttackChargePct(intruder) > 80) {
+            frame = battleSprites.WINDUP + (Math.floor(nowMs / 140) % 2);
+        } else {
+            const ownStep = (intruder.yPx - intruder.prevYPx) - (data.battle.scrollPx - data.battle.prevScrollPx);
+            if (ownStep > 0.01 && data.battle.state === "running") {
+                frame = battleSprites.walkFrame(renderY - viewData.battleScrollRenderPx, intruder.sizePx * 0.6);
+            } else {
+                frame = battleSprites.idleFrame(nowMs, intruder.id, 6);
+            }
+        }
+        // Forage tokens are small hitboxes; their art is drawn much larger and centred on the hitbox.
+        const spritePx = Math.round(intruder.sizePx * (isForage ? 2.9 : 1.16));
+        if (renderCache.spritePx !== spritePx) {
+            const top = isForage
+                ? (intruder.sizePx / 2) - (spritePx * (type === "tree" ? 0.56 : 0.72))
+                : (intruder.sizePx * 1.06) - (spritePx * 0.94);
+            spriteEl.style.width = `${spritePx}px`;
+            spriteEl.style.height = `${spritePx}px`;
+            spriteEl.style.left = `${Math.round((intruder.sizePx - spritePx) / 2)}px`;
+            spriteEl.style.top = `${Math.round(top)}px`;
+        }
+        if (renderCache.spriteSheet !== sheet || renderCache.spriteFrame !== frame || renderCache.spritePx !== spritePx) {
+            battleSprites.blit(spriteEl, sheet, frame, spritePx);
+            renderCache.spriteSheet = sheet;
+            renderCache.spriteFrame = frame;
+            renderCache.spritePx = spritePx;
+        }
+        if (renderCache.spriteAud !== undefined && intruder.aud < renderCache.spriteAud) {
+            renderCache.flashUntilMs = nowMs + 120;
+        }
+        renderCache.spriteAud = intruder.aud;
+        const flash = nowMs < (renderCache.flashUntilMs || 0);
+        if (renderCache.spriteFlash !== flash) {
+            spriteEl.style.filter = flash ? "brightness(2.3) saturate(0.35)" : "";
+            renderCache.spriteFlash = flash;
+        }
+    },
+    /** The clone (foxgirl seen from behind, one tail per Okami tail) walks only while the ground scrolls. */
+    renderPlayerSprite: function(nowMs) {
+        if (!view.isBattleVisible()) {
+            return;
+        }
+        const el = viewData.cached.playerSprite;
+        const cache = viewData.playerSpriteRender;
+        const sheet = battleSprites.getPlayerSheet(engine.getOkamiTails());
+        const moving = data.battle.state === "running" && data.battle.scrollPx !== data.battle.prevScrollPx;
+        const frame = moving
+            ? battleSprites.walkFrame(viewData.battleScrollRenderPx, 40)
+            : battleSprites.idleFrame(nowMs, 0, 5);
+        if (cache.sheet !== sheet || cache.frame !== frame) {
+            battleSprites.blit(el, sheet, frame, 112);
+            cache.sheet = sheet;
+            cache.frame = frame;
+        }
+        const aud = data.battle.player.aud;
+        if (cache.aud !== null && aud < cache.aud) {
+            cache.flashUntilMs = nowMs + 160;
+        }
+        cache.aud = aud;
+        const flash = nowMs < cache.flashUntilMs;
+        if (cache.flash !== flash) {
+            el.style.filter = flash ? "sepia(1) saturate(5) hue-rotate(-40deg) brightness(1.1)" : "";
+            cache.flash = flash;
+        }
+    },
     renderBattlefield: function() {
         createView.syncBattlefieldLayoutFromDom();
+        view.renderBattleBackdrop();
         const activeIds = {};
         const battlefield = viewData.cached.battlefield;
         const lm = engine.getBattleLaneMetrics();
         const alpha = data.gameSettings.renderAlpha ?? 1;
+        const nowMs = performance.now();
+        const map = initialize.getCurrentMapDefinition();
+        const canopyHoles = [];
+        view.renderPlayerSprite(nowMs);
 
         for (let i = 0; i < data.battle.enemies.length; i++) {
             const intruder = data.battle.enemies[i];
@@ -5050,44 +5167,13 @@ let view = {
                 intruderEl.style.transform = view.gpuTranslate(leftPx, renderY);
                 renderCache.posKey = posKey;
             }
-            const shapeLayer = intruderEl.querySelector(".intruder-shape-layer");
-            if (shapeLayer) {
-                const isForageUnit = intruder.intruderType === "tree" || intruder.intruderType === "bush" || intruder.intruderType === "ore_vein";
-                const lecherOn = intruder.intruderType === "lecher";
-                const spriteImg = shapeLayer.querySelector(".intruder-sprite-img");
-                if (spriteImg) {
-                    if (isForageUnit) {
-                        if (renderCache.spriteSrc) {
-                            spriteImg.style.display = "none";
-                            renderCache.spriteSrc = null;
-                        }
-                    } else {
-                        const spriteSrc = lecherOn ? "img/lecher.svg" : "img/scoundrel.svg";
-                        if (renderCache.spriteSrc !== spriteSrc) {
-                            spriteImg.src = spriteSrc;
-                            spriteImg.style.display = "";
-                            renderCache.spriteSrc = spriteSrc;
-                        }
-                    }
-                }
-                if (renderCache.lecherOn !== lecherOn) {
-                    shapeLayer.classList.toggle("intruder-token-lecher", lecherOn);
-                    renderCache.lecherOn = lecherOn;
-                }
-                if (isForageUnit) {
-                    const fill = intruder.intruderType === "tree" ? "#6f4e37" : (intruder.intruderType === "bush" ? "#3f7d3f" : "#737373");
-                    const forageKey = `${intruder.intruderType}|${fill}`;
-                    if (renderCache.forageKey !== forageKey) {
-                        shapeLayer.style.clipPath = "none";
-                        shapeLayer.style.border = "1px solid #2d2d2d";
-                        shapeLayer.style.background = fill;
-                        renderCache.forageKey = forageKey;
-                    }
-                } else if (renderCache.forageKey) {
-                    shapeLayer.style.background = "";
-                    renderCache.forageKey = null;
-                }
-            }
+            view.renderIntruderSprite(intruder, intruderEl.querySelector(".intruder-sprite"), renderCache, renderY, nowMs, map);
+            const isForageHole = intruder.intruderType === "tree" || intruder.intruderType === "bush" || intruder.intruderType === "ore_vein";
+            canopyHoles.push({
+                x: laneCenter,
+                y: renderY + intruder.sizePx * (isForageHole ? 0.2 : 0.4),
+                r: intruder.sizePx * (isForageHole ? 1.7 : 0.95)
+            });
             const audLayer = view.ensureIntruderAudFill(intruderEl);
             if (audLayer) {
                 const lecherAud = intruder.intruderType === "lecher";
@@ -5097,7 +5183,7 @@ let view = {
                     audLayer.classList.toggle("intruder-aud-lecher", lecherAud);
                     const audFill = audLayer.querySelector(".intruder-aud-fill");
                     if (audFill) {
-                        audFill.style.transform = `scaleY(${audScale})`;
+                        audFill.style.transform = `scaleX(${audScale})`;
                     }
                     renderCache.audKey = audKey;
                 }
@@ -5147,13 +5233,7 @@ let view = {
                         }
                         renderCache.atkMode = "combat";
                     }
-                    const cd = intruder.intruderType === "lecher" ? (intruder.attackCooldownMs * 2) : intruder.attackCooldownMs;
-                    const canCharge = intruder.intruderType === "lecher" ? (!!intruder.lecherReady || !!intruder.inRange) : !!intruder.inRange;
-                    const remain = Math.max(0, Math.min(cd, intruder.attackTimerMs || 0));
-                    const atkBarPct = canCharge
-                        ? (100 - Math.max(0, Math.min(100, (remain / cd) * 100)))
-                        : 0;
-                    const atkWidth = `${atkBarPct}%`;
+                    const atkWidth = `${view.getIntruderAttackChargePct(intruder)}%`;
                     if (renderCache.atkWidth !== atkWidth) {
                         atkFill.style.width = atkWidth;
                         renderCache.atkWidth = atkWidth;
@@ -5161,6 +5241,7 @@ let view = {
                 }
             }
         }
+        view.renderBattleForeground(canopyHoles);
         view.consumeLineFxQueue();
         view.renderIntruderAttackFx();
         view.renderSlapFx();
@@ -5509,10 +5590,8 @@ let view = {
             intruderEl.className = "intruder-token";
             const shapeLayer = document.createElement("div");
             shapeLayer.className = "intruder-shape-layer";
-            const spriteImg = document.createElement("img");
-            spriteImg.className = "intruder-sprite-img";
-            spriteImg.alt = "";
-            spriteImg.draggable = false;
+            const spriteImg = document.createElement("canvas");
+            spriteImg.className = "intruder-sprite";
             const audLayer = document.createElement("div");
             audLayer.className = "intruder-aud-layer";
             const audFill = document.createElement("div");

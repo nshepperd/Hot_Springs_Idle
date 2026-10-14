@@ -1135,7 +1135,7 @@ let createView = {
         createView.queueCache(
             "mainLayout", "gameColumnsRow", "gameProgressBars", "okamiProgressBar", "manaProgressBar", "manaFill", "manaAmount", "manaCap", "manaRate", "manaRateArchiveDrain", "manaEtaText",
             "divinityProgressBar", "divinityFill", "divinityAmount", "divinityCap", "divinityRate",
-            "battlefieldWrap", "battlefield", "battleHud", "battleEndRunBtn", "waveInfo", "waveInfoTimeRow", "waveInfoStar", "waveInfoTimeLabel", "waveInfoTransition", "waveInfoZoneShards", "waveInfoZones", "rangeMarkers", "attackLines", "slapFxLayer", "slapHandOuter", "slapHandSide", "slapHandInner", "playerBuffRow", "playerStack", "playerToken", "playerTokenAudLayer", "playerTokenAudFill", "playerStatAudLine", "playerStatDmgLine", "playerMovePulse",
+            "battlefieldWrap", "battlefield", "battleBackdrop", "battleForeground", "battleHud", "battleEndRunBtn", "waveInfo", "waveInfoTimeRow", "waveInfoStar", "waveInfoTimeLabel", "waveInfoTransition", "waveInfoZoneShards", "waveInfoZones", "rangeMarkers", "attackLines", "slapFxLayer", "slapHandOuter", "slapHandSide", "slapHandInner", "playerBuffRow", "playerStack", "playerSprite", "playerToken", "playerTokenAudLayer", "playerTokenAudFill", "playerStatAudLine", "playerStatDmgLine", "playerMovePulse",
             "playerAttackBarFill", "playerAttackBarLabel", "playerSandalBarTrack", "playerSandalBarFill", "playerSandalBarLabel",
             "playerClassBarA", "playerClassBarALabel", "playerClassBarAFill", "playerClassBarB", "playerClassBarBLabel", "playerClassBarBFill",
             "playerLevelBar", "playerLevelBarFill", "playerLevelBarLabel",

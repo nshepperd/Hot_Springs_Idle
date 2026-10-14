@@ -50,6 +50,7 @@ let engine = {
         }
         const dt = tickMs * engine.getBattleTimeRateMultiplier();
         data.battle.cloneAliveMs += dt;
+        data.battle.prevScrollPx = data.battle.scrollPx;
         if (engine.updateMapTransitionCountdown(tickMs)) {
             return;
         }
@@ -355,6 +356,8 @@ let engine = {
         const deltaSeconds = tickMs / 1000;
         const pushBonus = engine.getIntruderPushBonusPxPerSecond();
         const stackGap = gameData.battle.intruderStackGapPx || 0;
+        // Distance the clone has walked; the battlefield backdrop scrolls by exactly this.
+        data.battle.scrollPx += pushBonus * deltaSeconds;
         if ((data.battle.mode || "combat") === "foraging" && pushBonus > 0) {
             data.battle.forageMoveAccumPx = (data.battle.forageMoveAccumPx || 0) + (pushBonus * deltaSeconds);
         }
@@ -490,6 +493,7 @@ let engine = {
             const spd = data.battle.levelState.levelSpd || 0;
             const retreatRate = (gameData.battle.intruderTravelSpeedPxPerSecond + gameData.battle.idlePushBonusPxPerSecond) * (1 + (spd * 0.1));
             const retreatDy = retreatRate * deltaSeconds;
+            data.battle.scrollPx -= retreatDy;
             for (let i = 0; i < data.battle.enemies.length; i++) {
                 const intruder = data.battle.enemies[i];
                 if (!intruder.alive) continue;
