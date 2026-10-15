@@ -11500,11 +11500,15 @@ let engine = {
             return;
         }
         const cell = stalk.cells[cellIndex];
+        // A chop only ever cuts one cell. Power it doesn't need is banked for the next chop,
+        // up to one chop's worth.
         const chopPower = engine.getBambooChopPower();
-        const chopped = Math.min(chopPower, cell.lumber || 0);
+        const power = chopPower + (bf.chopCarry || 0);
+        const chopped = Math.min(power, cell.lumber || 0);
         if (chopped <= 0) {
             return;
         }
+        bf.chopCarry = Math.min(power - chopped, chopPower);
         cell.lumber -= chopped;
         bf.chips = (bf.chips || 0) + chopped;
         engine.convertBambooChipsToWood(bf);

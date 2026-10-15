@@ -629,6 +629,9 @@ let initialize = {
         if (bf.water === undefined) {
             bf.water = 0;
         }
+        if (bf.chopCarry === undefined) {
+            bf.chopCarry = 0;
+        }
         const cfg = resortData.bambooForestConfig;
         const stalkCount = bf.stalkCount || cfg.stalkCount || 4;
         const rowCount = bf.rowCount || cfg.rowCount || 3;

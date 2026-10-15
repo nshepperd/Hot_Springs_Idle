@@ -1392,6 +1392,7 @@ var resortData = {
                 workerPower: 0,
                 wood: 0,
                 chips: 0,
+                chopCarry: 0,
                 rowCount: 3,
                 stalkCount: 4,
                 activeHarvestStalk: null,
