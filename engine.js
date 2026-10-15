@@ -8819,7 +8819,7 @@ let engine = {
     /**
      * Desire paths, after Helbing's active-walker model (tuned in tools/desire-paths.html). Trail wear lives on a grid
      * of 4px cells over the map. A carrier heads for its destination but steers up the slope of the wear it can see
-     * nearby (a blurred copy of the grid, refreshed every few seconds), with a little random wander, so foxes drift
+     * nearby (a blurred copy of the grid, refreshed every few seconds), with optional random wander (off), so foxes drift
      * onto existing trails and busy routes merge into shared paths. Every step lays wear at the carrier's exact point,
      * split bilinearly over the four nearest cells (saturating at the road cap), so trails are thin and smooth; speed
      * reads the wear the same way: +0.5% per point. Wear fades 1 point per 30 s.
@@ -8827,7 +8827,7 @@ let engine = {
      * together with the last path walked on each route (used by the offline fast mode). If the map's size changes the
      * grid is stretched to match, like the building positions.
      */
-    dirtTrailConfig: { cellPx: 4, wearPerPx: 1.05, sigmaPx: 24, attraction: 2.5, inertia: 0.6, wander: 0.1, wanderTrailDamp: 3, wanderTimeS: 3, buildingRadiusPx: 24, stepPx: 3, refreshMs: 4000, fastRefreshMs: 30000, tracePointPx: 6 },
+    dirtTrailConfig: { cellPx: 4, wearPerPx: 1.05, sigmaPx: 24, attraction: 2.5, inertia: 0.6, wander: 0,wanderTrailDamp: 3, wanderTimeS: 3, buildingRadiusPx: 24, stepPx: 3, refreshMs: 4000, fastRefreshMs: 30000, tracePointPx: 6 },
     dirtTrail: null,
     /** Offline catch-up: carriers replay each route's last walked path instead of steering, and the blurred field isn't rebuilt. */
     dirtTrailFastMode: false,
