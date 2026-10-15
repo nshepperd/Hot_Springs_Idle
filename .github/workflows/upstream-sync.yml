@@ -96,12 +96,13 @@ jobs:
                as the fork doesn't make it worse; mention it.
             4. Publish: if the smoke test passes, `git push origin ${{ env.SYNC_BRANCH }}`, then request a Pages build with
                `gh api -X POST repos/${{ github.repository }}/pages/builds`. If you cannot get it passing after a
-               reasonable effort, push the merge to a branch `upstream-sync/<9-char upstream sha>` instead and open a PR
+               reasonable effort, push the merge to a branch `upstream-sync/<new>` (as below) instead and open a PR
                into ${{ env.SYNC_BRANCH }} with `gh pr create --label upstream-sync`, explaining what fails and what you tried. Never
                force-push or rewrite the branch's existing history.
             5. End with a short summary: which upstream commits were merged, conflicts and how you resolved them, fork
                code you adapted, smoke test result, and where you pushed.
 
-            Merge commit message: "Merge upstream <old 9-char sha>..<new 9-char sha>: <one-line summary>" with a body
-            listing notable upstream changes and any conflict resolutions. End every commit message with
+            Merge commit message: "Merge upstream <old>..<new>: <one-line summary>", where <old> and <new> are the first 9
+            characters of the real upstream SHAs from the mirrored commits' Upstream-Commit trailers (not the mirror's own SHAs),
+            with a body listing notable upstream changes and any conflict resolutions. End every commit message with
             "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>".
