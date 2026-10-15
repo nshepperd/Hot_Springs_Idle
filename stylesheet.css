@@ -437,7 +437,7 @@ button {
     align-items: center;
     gap: 3px;
     z-index: 22;
-    width: min(200px, 90%);
+    width: min(220px, 90%);
 }
 
 #playerBuffRow {
@@ -687,11 +687,11 @@ button {
     }
 }
 
-/* Compact HUD: each label sits inside its 12px bar, so the clone's sprite stays clear of the intruder line. */
+/* Compact HUD: each label sits inside its 15px bar, so the clone's sprite stays clear of the intruder line. */
 .player-bar-block {
     position: relative;
     width: 100%;
-    min-height: 12px;
+    min-height: 15px;
 }
 
 .player-bars-row {
@@ -707,8 +707,8 @@ button {
     right: 0;
     top: 0;
     z-index: 2;
-    font-size: 10px;
-    line-height: 12px;
+    font-size: 11px;
+    line-height: 15px;
     color: #eef1fb;
     text-shadow: 0 0 2px #000, 0 0 3px #000, 0 1px 2px rgba(0, 0, 0, 0.9);
     text-align: center;
@@ -716,9 +716,10 @@ button {
     pointer-events: none;
 }
 
-.player-prog-track {
+/* Beats the generic .prog-track height (declared later). */
+.prog-track.player-prog-track {
     box-sizing: border-box;
-    height: 12px;
+    height: 15px;
 }
 
 .player-prog-track .prog-fill,
@@ -812,6 +813,12 @@ button {
     overflow: visible;
     z-index: 20;
     will-change: transform;
+}
+
+/* Aud bar and stat text, above the tree canopy (#battleForeground, z 21, earlier in the DOM). */
+.intruder-label-token {
+    z-index: 21;
+    pointer-events: none;
 }
 
 .intruder-shape-layer {

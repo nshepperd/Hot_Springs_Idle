@@ -1136,7 +1136,7 @@ let createView = {
             "mainLayout", "gameColumnsRow", "gameProgressBars", "okamiProgressBar", "manaProgressBar", "manaFill", "manaAmount", "manaCap", "manaRate", "manaRateArchiveDrain", "manaEtaText",
             "divinityProgressBar", "divinityFill", "divinityAmount", "divinityCap", "divinityRate",
             "battlefieldWrap", "battlefield", "battleBackdrop", "battleForeground", "battleHud", "battleEndRunBtn", "waveInfo", "waveInfoTimeRow", "waveInfoStar", "waveInfoTimeLabel", "waveInfoTransition", "waveInfoZoneShards", "waveInfoZones", "rangeMarkers", "attackLines", "slapFxLayer", "slapHandOuter", "slapHandSide", "slapHandInner", "playerBuffRow", "playerStack", "playerSprite", "playerToken", "playerTokenAudLayer", "playerTokenAudFill", "playerStatAudLine", "playerStatDmgLine", "playerMovePulse",
-            "playerAttackBarFill", "playerAttackBarLabel", "playerSandalBarTrack", "playerSandalBarFill", "playerSandalBarLabel",
+            "playerAttackBarFill", "playerAttackBarLabel", "playerSandalBar", "playerBarsRowMid", "playerSandalBarTrack", "playerSandalBarFill", "playerSandalBarLabel",
             "playerClassBarA", "playerClassBarALabel", "playerClassBarAFill", "playerClassBarB", "playerClassBarBLabel", "playerClassBarBFill",
             "playerLevelBar", "playerLevelBarFill", "playerLevelBarLabel",
             "playerBattleHudSecondary", "deathOverlay", "deathTitle", "deathManaBonus", "deathSummary", "deathTalentDetails", "tryAgainButton", "menuContent", "menuColumn", "battleColumn", "tabButton_base", "tabButton_guests", "tabButton_leveling", "tabButton_stats", "tabButton_skills", "tabButton_travel", "tabButton_history", "tabButton_cardBonuses", "tabButton_options", "cardBonusesList", "cardBonusesEmpty",

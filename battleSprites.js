@@ -26,6 +26,7 @@ let battleSprites = {
     WINDUP: 16,
     VARIANTS: 3,
     sheets: {},
+    nextSheetId: 0,
 
     // ---------------------------------------------------------------- public API
 
@@ -96,6 +97,11 @@ let battleSprites = {
         line.width = F;
         line.height = F;
         const lctx = line.getContext("2d");
+        // Silhouettes without the ground shadow, for outlines drawn through the canopy.
+        const mask = document.createElement("canvas");
+        mask.width = F * frames;
+        mask.height = F;
+        const mctx = mask.getContext("2d");
         const o = Math.max(1.5, F / 70);
         for (let f = 0; f < frames; f++) {
             actx.setTransform(1, 0, 0, 1, 0, 0);
@@ -126,8 +132,11 @@ let battleSprites = {
             sctx.restore();
             sctx.drawImage(line, x0, 0);
             sctx.drawImage(art, x0, 0);
+            mctx.drawImage(line, x0, 0);
+            mctx.drawImage(art, x0, 0);
         }
-        return { canvas: sheet, frame: F, frames: frames };
+        battleSprites.nextSheetId++;
+        return { canvas: sheet, mask: mask, frame: F, frames: frames, id: battleSprites.nextSheetId };
     },
 
     // ---------------------------------------------------------------- color / shape helpers

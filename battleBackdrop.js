@@ -3,9 +3,8 @@
 // retreats), so a still backdrop always means the intruders are the ones doing the walking.
 // Background canvas, bottom to top: terrain tile, props tile, lights, low particles, speed streaks, light
 // shafts, static lighting overlay. Foreground canvas (above the intruders): overhead tile (tree tops, same
-// period as props), canopy tile (parallax overhangs), high particles; it turns see-through around each
-// intruder so they stay readable while walking "under" the trees. Tiles use different heights so their
-// repeats rarely line up.
+// period as props), canopy tile (parallax overhangs), high particles; intruders walking "under" the trees
+// show through it as outlines. Tiles use different heights so their repeats rarely line up.
 
 const BACKDROP_THEME_BY_MAP = {
     map_1: "meadow",
@@ -30,7 +29,9 @@ let battleBackdrop = {
     PARTICLE_MARGIN: 40,
     scene: null,
     glowCache: {},
-    holeCanvas: null,
+    outlineCache: new Map(),
+    outlineScratch: null,
+    ghostLayer: null,
     lastRenderMs: 0,
     lastScrollPx: 0,
     speedPxPerSec: 0,
@@ -117,10 +118,11 @@ let battleBackdrop = {
         scene.frameDt = dt;
     },
     /**
-     * Foreground canvas: tree tops and overhangs (lit by the same overlay), with soft see-through holes at
-     * `holes` ([{x, y, r}] in battlefield px) so intruders under the trees stay visible. Call after render().
+     * Foreground canvas: tree tops and overhangs (lit by the same overlay). Intruders under the trees show as
+     * outlines drawn only over the foliage: `ghosts` is [{sheet, frame, x, y, px, color}], x/y the sprite's
+     * top-left in battlefield px and px its CSS size. Call after render().
      */
-    renderForeground: function(canvas, scrollPx, nowMs, holes) {
+    renderForeground: function(canvas, scrollPx, nowMs, ghosts) {
         const scene = battleBackdrop.scene;
         const W = scene.W;
         const H = scene.H;
@@ -140,30 +142,75 @@ let battleBackdrop = {
         battleBackdrop.drawTiled(ctx, scene.canopy, canopy, W, H);
         ctx.globalCompositeOperation = "source-atop";
         ctx.drawImage(scene.overlay, 0, 0, W, H);
-        ctx.globalCompositeOperation = "destination-out";
-        const hole = battleBackdrop.holeSprite();
-        for (let i = 0; i < holes.length; i++) {
-            const h = holes[i];
-            ctx.drawImage(hole, h.x - h.r, h.y - h.r, h.r * 2, h.r * 2);
+        if (ghosts.length) {
+            // Rings go on a scratch layer first, then source-atop clips them to the foliage drawn above.
+            const layer = battleBackdrop.ghostLayer || (battleBackdrop.ghostLayer = document.createElement("canvas"));
+            if (layer.width !== canvas.width || layer.height !== canvas.height) {
+                layer.width = canvas.width;
+                layer.height = canvas.height;
+            }
+            const lctx = layer.getContext("2d");
+            lctx.clearRect(0, 0, layer.width, layer.height);
+            for (let i = 0; i < ghosts.length; i++) {
+                const g = ghosts[i];
+                const ring = battleBackdrop.outlineSprite(g.sheet, g.frame, g.px, g.color, dpr);
+                lctx.drawImage(ring, Math.round(g.x * dpr) - ring.pad, Math.round(g.y * dpr) - ring.pad);
+            }
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.drawImage(layer, 0, 0);
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         }
         ctx.globalCompositeOperation = "source-over";
         battleBackdrop.drawParticles(ctx, scene, ground, scene.frameDt, nowMs / 1000, true);
     },
-    holeSprite: function() {
-        if (!battleBackdrop.holeCanvas) {
-            const c = document.createElement("canvas");
-            c.width = 64;
-            c.height = 64;
-            const g = c.getContext("2d");
-            const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-            grad.addColorStop(0, "rgba(0,0,0,0.8)");
-            grad.addColorStop(0.55, "rgba(0,0,0,0.72)");
-            grad.addColorStop(1, "rgba(0,0,0,0)");
-            g.fillStyle = grad;
-            g.fillRect(0, 0, 64, 64);
-            battleBackdrop.holeCanvas = c;
+    /**
+     * Outline ring (device px) around one sprite frame's silhouette: a thin `color` line inside a soft dark
+     * halo, hollow where the sprite is. Cached per (sheet, frame, size, color); `.pad` is the margin added.
+     */
+    outlineSprite: function(sheet, frame, cssPx, color, dpr) {
+        const px = Math.max(1, Math.round(cssPx * dpr));
+        const key = `${sheet.id}|${frame}|${px}|${color}`;
+        const cache = battleBackdrop.outlineCache;
+        if (cache.has(key)) {
+            return cache.get(key);
         }
-        return battleBackdrop.holeCanvas;
+        if (cache.size > 600) {
+            cache.clear();
+        }
+        const line = 1.4 * dpr;
+        const halo = 2.8 * dpr;
+        const pad = Math.ceil(halo) + 1;
+        const S = px + pad * 2;
+        const c = document.createElement("canvas");
+        c.width = S;
+        c.height = S;
+        c.pad = pad;
+        const g = c.getContext("2d");
+        const t = battleBackdrop.outlineScratch || (battleBackdrop.outlineScratch = document.createElement("canvas"));
+        t.width = S;
+        t.height = S;
+        const tg = t.getContext("2d");
+        const F = sheet.frame;
+        const dilate = function(radii, fill) {
+            tg.globalCompositeOperation = "source-over";
+            tg.clearRect(0, 0, S, S);
+            for (let r = 0; r < radii.length; r++) {
+                for (let d = 0; d < 12; d++) {
+                    const a = (d / 12) * BACKDROP_TAU;
+                    tg.drawImage(sheet.mask, frame * F, 0, F, F, pad + Math.cos(a) * radii[r], pad + Math.sin(a) * radii[r], px, px);
+                }
+            }
+            tg.globalCompositeOperation = "source-in";
+            tg.fillStyle = fill;
+            tg.fillRect(0, 0, S, S);
+            g.drawImage(t, 0, 0);
+        };
+        dilate([halo * 0.5, halo], "rgba(12,6,18,0.5)");
+        dilate([line * 0.5, line], color);
+        g.globalCompositeOperation = "destination-out";
+        g.drawImage(sheet.mask, frame * F, 0, F, F, pad, pad, px, px);
+        cache.set(key, c);
+        return c;
     },
 
     // ---------------------------------------------------------------- math / color helpers
