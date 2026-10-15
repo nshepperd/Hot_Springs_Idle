@@ -723,6 +723,12 @@ let events = {
             }
         });
     },
+    onResortMapMouseMove: function(e) {
+        view.showDirtRoadTip(e);
+    },
+    hideDirtRoadTip: function() {
+        viewData.cached.dirtRoadMouseTip.style.display = "none";
+    },
     selectBaseBuilding: function(buildingKey, pathSegmentIndex) {
         if (buildingKey === "path") {
             const idx = pathSegmentIndex;
@@ -2023,9 +2029,6 @@ let events = {
             }
             if (view.updatePathSegmentHighlight) {
                 view.updatePathSegmentHighlight(null);
-            }
-            if (view.updateDirtRoadLayer) {
-                view.updateDirtRoadLayer();
             }
             if (view.updateView) {
                 view.updateView();

@@ -831,6 +831,7 @@ let offline = {
         offline.showProcessing();
 
         let remaining = offline.totalToProcessMs;
+        engine.setDirtTrailFastMode(true);
 
         try {
             // Phase A: spend offline on current run first
@@ -882,6 +883,7 @@ let offline = {
                 }
             }
         } finally {
+            engine.setDirtTrailFastMode(false);
             data.gameSettings.stop = prevStop;
             data.gameSettings.stopAll = false;
             isProcessingOffline = false;

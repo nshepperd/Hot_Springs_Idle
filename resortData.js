@@ -2585,7 +2585,7 @@ var resortData = {
                 formDirtRoads: {
                     key: "form_dirt_roads",
                     name: "Form Dirt Roads",
-                    description: "Carriers wear dirt roads between buildings. Each progress point is 0.5% faster movespeed. Roads decay 0.5% every 30 seconds.",
+                    description: "Carriers wear dirt paths as they walk, and drift onto ground that is already worn, so busy routes merge into shared paths. Each point of wear is 0.5% faster movespeed. Wear fades 1 point every 30 seconds.",
                     cost: { mana: 3000, coins: 500 },
                     weavingTime: 90,
                     canBuy: function() {
@@ -2598,7 +2598,7 @@ var resortData = {
                     },
                     extraInfo: function() {
                         const cap = engine.getDirtRoadMaxProgress();
-                        return `Cap: ${cap} progress (+${round1(cap * 0.5)}% speed). Per delivery: ${engine.getDirtRoadProgressPerDelivery()}`;
+                        return `Cap: ${cap} wear (+${round1(cap * 0.5)}% speed). Wear per step: ${engine.getDirtTrailWearPerStep()}`;
                     },
                     rowVisible: function() {
                         const a = data.progress.base.atelier;
@@ -2836,7 +2836,7 @@ var resortData = {
                 sprinkleOreOnRoads: {
                     key: "sprinkle_ore_on_roads",
                     name: "Sprinkle Ore on Roads",
-                    description: "Ore dust packed into the dirt roads. Each carrier delivery adds 2 progress instead of 1.",
+                    description: "Ore dust packed into the dirt paths. Each carrier step adds 2.5 wear instead of 1.",
                     cost: { ore: 400 },
                     weavingTime: 240,
                     canBuy: function() {
@@ -2847,7 +2847,7 @@ var resortData = {
                         data.progress.base.atelier.sprinkleOreOnRoadsBought = 1;
                     },
                     extraInfo: function() {
-                        return "Road progress per delivery: 2";
+                        return "Wear per step: 2.5";
                     },
                     rowVisible: function() {
                         const a = data.progress.base.atelier;
@@ -2861,7 +2861,7 @@ var resortData = {
                 improveDirtRoads: {
                     key: "improve_dirt_roads",
                     name: "Improve Dirt Roads",
-                    description: "Thicker roads hold more progress. +20 maximum road progress per purchase, and speed keeps scaling at 0.5% per progress.",
+                    description: "Thicker roads hold more wear. +20 maximum road wear per purchase, and speed keeps scaling at 0.5% per point.",
                     getCost: function() {
                         const n = data.progress.base.atelier.improveDirtRoadsBought || 0;
                         return { ore: Math.round(250 * Math.pow(2, n)) };

@@ -3565,7 +3565,7 @@ let engine = {
         engine.updateBonfireWoodCarriers(tickMs);
         engine.updateMarketCreditCarriers(tickMs);
         engine.updateMarketTrades(tickMs);
-        engine.updateDirtRoads(tickMs);
+        engine.updateDirtTrail(tickMs);
         engine.updateWeaving(tickMs);
         engine.syncInnRoomCounts();
     },
@@ -8804,61 +8804,6 @@ let engine = {
         const a = data.progress.base && data.progress.base.atelier;
         return !!(a && a.formDirtRoadsUnlocked);
     },
-    getDirtRoads: function() {
-        const base = data.progress.base;
-        if (!base) {
-            return [];
-        }
-        if (!base.dirtRoads) {
-            base.dirtRoads = [];
-        }
-        return base.dirtRoads;
-    },
-    getDirtRoadKey: function(fromKey, toKey) {
-        const a = fromKey || "";
-        const b = toKey || "";
-        return a < b ? `${a}|${b}` : `${b}|${a}`;
-    },
-    getDirtRoadSortedKeys: function(fromKey, toKey) {
-        const a = fromKey || "";
-        const b = toKey || "";
-        if (a < b) {
-            return { fromKey: a, toKey: b };
-        }
-        return { fromKey: b, toKey: a };
-    },
-    getDirtRoad: function(fromKey, toKey) {
-        if (!fromKey || !toKey) {
-            return null;
-        }
-        const key = engine.getDirtRoadKey(fromKey, toKey);
-        const roads = engine.getDirtRoads();
-        for (let i = 0; i < roads.length; i++) {
-            const r = roads[i];
-            if (engine.getDirtRoadKey(r.fromKey, r.toKey) === key) {
-                return r;
-            }
-        }
-        return null;
-    },
-    ensureDirtRoad: function(fromKey, toKey) {
-        if (!engine.isDirtRoadsUnlocked() || !fromKey || !toKey || fromKey === toKey) {
-            return null;
-        }
-        let road = engine.getDirtRoad(fromKey, toKey);
-        if (road) {
-            return road;
-        }
-        const sorted = engine.getDirtRoadSortedKeys(fromKey, toKey);
-        road = {
-            fromKey: sorted.fromKey,
-            toKey: sorted.toKey,
-            progress: 0,
-            decayAccMs: 0
-        };
-        engine.getDirtRoads().push(road);
-        return road;
-    },
     getDirtRoadMaxProgress: function() {
         const atelier = data.progress.base && data.progress.base.atelier;
         const bought = (atelier && atelier.improveDirtRoadsBought) || 0;
@@ -8866,69 +8811,521 @@ let engine = {
             ? (shrineCards.getAggregatedEffects().dirtRoadMaxProgressFlat || 0) : 0;
         return 100 + 20 * bought + cardAdd;
     },
-    getDirtRoadProgressPerDelivery: function() {
+    /** Multiplier on the wear a carrier lays per pixel walked. Calibrated so trips average out like the old per-delivery road progress (1, or 2 with ore). */
+    getDirtTrailWearPerStep: function() {
         const atelier = data.progress.base && data.progress.base.atelier;
-        return (atelier && atelier.sprinkleOreOnRoadsBought) ? 2 : 1;
+        return (atelier && atelier.sprinkleOreOnRoadsBought) ? 2.5 : 1;
     },
-    getDirtRoadSpeedMult: function(fromKey, toKey) {
-        const road = engine.getDirtRoad(fromKey, toKey);
-        const cap = engine.getDirtRoadMaxProgress();
-        const progress = road ? Math.max(0, Math.min(cap, road.progress || 0)) : 0;
-        return 1 + 0.005 * progress;
+    /**
+     * Desire paths, after Helbing's active-walker model (tuned in tools/desire-paths.html). Trail wear lives on a grid
+     * of 4px cells over the map. A carrier heads for its destination but steers up the slope of the wear it can see
+     * nearby (a blurred copy of the grid, refreshed every few seconds), with a little random wander, so foxes drift
+     * onto existing trails and busy routes merge into shared paths. Every step lays wear at the carrier's exact point,
+     * split bilinearly over the four nearest cells (saturating at the road cap), so trails are thin and smooth; speed
+     * reads the wear the same way: +0.5% per point. Wear fades 1 point per 30 s.
+     * Levels are a runtime Float32Array, packed into data.progress.base.dirtTrail on save (see encodeDirtTrailWear),
+     * together with the last path walked on each route (used by the offline fast mode). If the map's size changes the
+     * grid is stretched to match, like the building positions.
+     */
+    dirtTrailConfig: { cellPx: 4, wearPerPx: 1.05, sigmaPx: 24, attraction: 2.5, inertia: 0.6, wander: 0.1, wanderTrailDamp: 3, wanderTimeS: 3, buildingRadiusPx: 24, stepPx: 3, refreshMs: 4000, fastRefreshMs: 30000, tracePointPx: 6 },
+    dirtTrail: null,
+    /** Offline catch-up: carriers replay each route's last walked path instead of steering, and the blurred field isn't rebuilt. */
+    dirtTrailFastMode: false,
+    dirtTrailWalkTraces: new WeakMap(),
+    getDirtTrail: function() {
+        const saved = data.progress.base.dirtTrail;
+        if (engine.dirtTrail && engine.dirtTrail.saved === saved) {
+            return engine.dirtTrail;
+        }
+        const dims = engine.getResortMapDimensions();
+        const trail = {
+            saved: saved,
+            cell: engine.dirtTrailConfig.cellPx,
+            cols: 0,
+            rows: 0,
+            w: dims.w,
+            h: dims.h,
+            cap: engine.getDirtRoadMaxProgress(),
+            wearPerStep: engine.getDirtTrailWearPerStep(),
+            refreshAccMs: 0,
+            obstacleKeys: { foxDen: true },
+            obstacles: [],
+            traces: {}
+        };
+        engine.dirtTrail = trail;
+        const savedLevels = new Float32Array(saved.cols * saved.rows);
+        engine.decodeDirtTrailWear(saved.wear, savedLevels);
+        // Older saves stored a 115×115 grid stretched over the map, with no recorded map size.
+        const scaleX = saved.w ? dims.w / saved.w : 1;
+        const scaleY = saved.h ? dims.h / saved.h : 1;
+        engine.resizeDirtTrail(trail, savedLevels, saved.cols, saved.rows, saved.cell ? saved.cell * scaleX : dims.w / saved.cols, saved.cell ? saved.cell * scaleY : dims.h / saved.rows);
+        const traceKeys = Object.keys(saved.traces);
+        for (let ti = 0; ti < traceKeys.length; ti++) {
+            const flat = saved.traces[traceKeys[ti]].slice();
+            for (let k = 0; k < flat.length; k += 2) {
+                flat[k] *= scaleX;
+                flat[k + 1] *= scaleY;
+            }
+            trail.traces[traceKeys[ti]] = engine.makeDirtTrailTrace(flat);
+            const ends = traceKeys[ti].split(">");
+            trail.obstacleKeys[ends[0]] = true;
+            trail.obstacleKeys[ends[1]] = true;
+        }
+        engine.migrateDirtRoadsToTrail(trail);
+        engine.refreshDirtTrailPotential(trail);
+        return trail;
     },
-    getCarrierRoadSpeedMult: function(carrier) {
-        return (carrier && carrier.roadSpeedMult) || 1;
-    },
-    applyDirtRoadOnSpawn: function(carrier, fromKey, toKey) {
-        if (!carrier) {
+    /** (Re)builds the grid for trail.w × trail.h, filling it from `src` (sCols × sRows cells, each srcCellX × srcCellY of today's map px). */
+    resizeDirtTrail: function(trail, src, sCols, sRows, srcCellX, srcCellY) {
+        trail.cols = Math.ceil(trail.w / trail.cell);
+        trail.rows = Math.ceil(trail.h / trail.cell);
+        const n = trail.cols * trail.rows;
+        trail.levels = new Float32Array(n);
+        trail.potential = new Float32Array(n);
+        trail.tmpA = new Float32Array(n);
+        trail.tmpB = new Float32Array(n);
+        if (sCols < 2 || sRows < 2) {
             return;
         }
-        carrier.fromKey = fromKey;
-        carrier.toKey = toKey;
-        if (!engine.isDirtRoadsUnlocked() || !fromKey || !toKey) {
-            carrier.roadSpeedMult = 1;
-            return;
-        }
-        engine.ensureDirtRoad(fromKey, toKey);
-        carrier.roadSpeedMult = engine.getDirtRoadSpeedMult(fromKey, toKey);
-    },
-    addDirtRoadProgress: function(fromKey, toKey) {
-        if (!engine.isDirtRoadsUnlocked() || !fromKey || !toKey) {
-            return;
-        }
-        const road = engine.ensureDirtRoad(fromKey, toKey);
-        if (!road) {
-            return;
-        }
-        const prev = road.progress || 0;
-        road.progress = Math.min(engine.getDirtRoadMaxProgress(), prev + engine.getDirtRoadProgressPerDelivery());
-        if (prev <= 0 && road.progress > 0) {
-            road.decayAccMs = 0;
+        for (let y = 0; y < trail.rows; y++) {
+            const v = Math.min(sRows - 1.001, Math.max(0, ((y + 0.5) * trail.cell) / srcCellY - 0.5));
+            const j0 = v | 0;
+            const fv = v - j0;
+            for (let x = 0; x < trail.cols; x++) {
+                const u = Math.min(sCols - 1.001, Math.max(0, ((x + 0.5) * trail.cell) / srcCellX - 0.5));
+                const i0 = u | 0;
+                const fu = u - i0;
+                const i = j0 * sCols + i0;
+                trail.levels[y * trail.cols + x] = (src[i] * (1 - fu) + src[i + 1] * fu) * (1 - fv) + (src[i + sCols] * (1 - fu) + src[i + sCols + 1] * fu) * fv;
+            }
         }
     },
-    updateDirtRoads: function(tickMs) {
+    /** Saves from before desire paths kept one straight road per route; paint each as a worn line so nothing is lost. */
+    migrateDirtRoadsToTrail: function(trail) {
+        const roads = data.progress.base.dirtRoads;
+        if (!roads) {
+            return;
+        }
+        const reach = 1.5 * trail.cell;
+        for (let ri = 0; ri < roads.length; ri++) {
+            const p = Math.min(trail.cap, roads[ri].progress || 0);
+            if (p <= 0) {
+                continue;
+            }
+            const a = engine.getMapBuildingPosition(roads[ri].fromKey);
+            const b = engine.getMapBuildingPosition(roads[ri].toKey);
+            const steps = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 2);
+            for (let s = 0; s <= steps; s++) {
+                const px = a.x + (b.x - a.x) * (s / steps);
+                const py = a.y + (b.y - a.y) * (s / steps);
+                const cx = Math.floor(px / trail.cell);
+                const cy = Math.floor(py / trail.cell);
+                for (let y = Math.max(0, cy - 1); y <= Math.min(trail.rows - 1, cy + 1); y++) {
+                    for (let x = Math.max(0, cx - 1); x <= Math.min(trail.cols - 1, cx + 1); x++) {
+                        const d = Math.hypot((x + 0.5) * trail.cell - px, (y + 0.5) * trail.cell - py);
+                        const i = y * trail.cols + x;
+                        trail.levels[i] = Math.max(trail.levels[i], p * Math.max(0, 1 - d / reach));
+                    }
+                }
+            }
+            trail.obstacleKeys[roads[ri].fromKey] = true;
+            trail.obstacleKeys[roads[ri].toKey] = true;
+        }
+        delete data.progress.base.dirtRoads;
+    },
+    storeDirtTrail: function() {
+        const trail = engine.dirtTrail;
+        if (!trail || trail.saved !== data.progress.base.dirtTrail) {
+            return;
+        }
+        trail.saved.cell = trail.cell;
+        trail.saved.cols = trail.cols;
+        trail.saved.rows = trail.rows;
+        trail.saved.w = trail.w;
+        trail.saved.h = trail.h;
+        trail.saved.wear = engine.encodeDirtTrailWear(trail.levels);
+        trail.saved.traces = {};
+        const traceKeys = Object.keys(trail.traces);
+        for (let ti = 0; ti < traceKeys.length; ti++) {
+            trail.saved.traces[traceKeys[ti]] = trail.traces[traceKeys[ti]].flat.map(Math.round);
+        }
+    },
+    /** Wear rounded to whole points, as base64 bytes of (gap since previous worn cell, wear) pairs; wear 0 is a pure skip of 255 cells. */
+    encodeDirtTrailWear: function(levels) {
+        const bytes = [];
+        let prev = -1;
+        for (let i = 0; i < levels.length; i++) {
+            const wear = Math.min(255, Math.round(levels[i]));
+            if (wear <= 0) {
+                continue;
+            }
+            let gap = i - prev;
+            while (gap > 255) {
+                bytes.push(255, 0);
+                gap -= 255;
+            }
+            bytes.push(gap, wear);
+            prev = i;
+        }
+        let text = "";
+        for (let b = 0; b < bytes.length; b += 4096) {
+            text += String.fromCharCode.apply(null, bytes.slice(b, b + 4096));
+        }
+        return btoa(text);
+    },
+    decodeDirtTrailWear: function(encoded, levels) {
+        const text = atob(encoded);
+        let i = -1;
+        for (let b = 0; b + 1 < text.length; b += 2) {
+            i += text.charCodeAt(b);
+            if (text.charCodeAt(b + 1) > 0) {
+                levels[i] = text.charCodeAt(b + 1);
+            }
+        }
+    },
+    /** Bilinear sample of a grid field at a map point. */
+    sampleDirtTrailField: function(trail, field, x, y) {
+        const u = Math.min(trail.cols - 1.001, Math.max(0, x / trail.cell - 0.5));
+        const v = Math.min(trail.rows - 1.001, Math.max(0, y / trail.cell - 0.5));
+        const i0 = u | 0;
+        const j0 = v | 0;
+        const fu = u - i0;
+        const fv = v - j0;
+        const i = j0 * trail.cols + i0;
+        return (field[i] * (1 - fu) + field[i + 1] * fu) * (1 - fv) + (field[i + trail.cols] * (1 - fu) + field[i + trail.cols + 1] * fu) * fv;
+    },
+    getDirtTrailLevelAt: function(x, y) {
+        const trail = engine.getDirtTrail();
+        return engine.sampleDirtTrailField(trail, trail.levels, x, y);
+    },
+    getDirtTrailSpeedMultAt: function(trail, x, y) {
+        return 1 + 0.005 * Math.min(trail.cap, engine.sampleDirtTrailField(trail, trail.levels, x, y));
+    },
+    /** Lays `amount` wear at a map point, split bilinearly over the four nearest cells, each saturating toward the cap. */
+    splatDirtTrail: function(trail, x, y, amount) {
+        const u = Math.min(trail.cols - 1.001, Math.max(0, x / trail.cell - 0.5));
+        const v = Math.min(trail.rows - 1.001, Math.max(0, y / trail.cell - 0.5));
+        const i0 = u | 0;
+        const j0 = v | 0;
+        const fu = u - i0;
+        const fv = v - j0;
+        const L = trail.levels;
+        const i = j0 * trail.cols + i0;
+        const k = amount / trail.cap;
+        L[i] += amount * (1 - fu) * (1 - fv) - k * (1 - fu) * (1 - fv) * L[i];
+        L[i + 1] += amount * fu * (1 - fv) - k * fu * (1 - fv) * L[i + 1];
+        L[i + trail.cols] += amount * (1 - fu) * fv - k * (1 - fu) * fv * L[i + trail.cols];
+        L[i + trail.cols + 1] += amount * fu * fv - k * fu * fv * L[i + trail.cols + 1];
+    },
+    /** Fades wear (exactly, however long the gap) and, outside fast mode, rebuilds the blurred field carriers steer by. */
+    updateDirtTrail: function(tickMs) {
         if (!engine.isDirtRoadsUnlocked()) {
             return;
         }
-        const roads = engine.getDirtRoads();
-        const step = tickMs || 0;
-        for (let i = 0; i < roads.length; i++) {
-            const road = roads[i];
-            if ((road.progress || 0) <= 0) {
-                road.progress = 0;
-                road.decayAccMs = 0;
-                continue;
+        const trail = engine.getDirtTrail();
+        trail.refreshAccMs += tickMs;
+        if (trail.refreshAccMs < (engine.dirtTrailFastMode ? engine.dirtTrailConfig.fastRefreshMs : engine.dirtTrailConfig.refreshMs)) {
+            return;
+        }
+        const fade = trail.refreshAccMs / 30000;
+        trail.refreshAccMs = 0;
+        const L = trail.levels;
+        for (let i = 0; i < L.length; i++) {
+            const v = L[i] - fade;
+            L[i] = v > 0 ? v : 0;
+        }
+        trail.cap = engine.getDirtRoadMaxProgress();
+        trail.wearPerStep = engine.getDirtTrailWearPerStep();
+        if (!engine.dirtTrailFastMode) {
+            engine.refreshDirtTrailPotential(trail);
+        }
+    },
+    setDirtTrailFastMode: function(on) {
+        engine.dirtTrailFastMode = on;
+        if (!on && engine.isDirtRoadsUnlocked()) {
+            engine.refreshDirtTrailPotential(engine.getDirtTrail());
+        }
+    },
+    refreshDirtTrailPotential: function(trail) {
+        const cfg = engine.dirtTrailConfig;
+        const dims = engine.getResortMapDimensions();
+        if (dims.w !== trail.w || dims.h !== trail.h) {
+            // The map was resized: buildings sit at the same fractions of it, so stretch trails and recorded paths along.
+            const scaleX = dims.w / trail.w;
+            const scaleY = dims.h / trail.h;
+            const traceKeys = Object.keys(trail.traces);
+            for (let ti = 0; ti < traceKeys.length; ti++) {
+                const flat = trail.traces[traceKeys[ti]].flat;
+                for (let k = 0; k < flat.length; k += 2) {
+                    flat[k] *= scaleX;
+                    flat[k + 1] *= scaleY;
+                }
+                trail.traces[traceKeys[ti]] = engine.makeDirtTrailTrace(flat);
             }
-            road.decayAccMs = (road.decayAccMs || 0) + step;
-            while ((road.progress || 0) > 0 && road.decayAccMs >= 30000) {
-                road.decayAccMs -= 30000;
-                road.progress = (road.progress || 0) - 1;
+            const old = trail.levels;
+            const oldCols = trail.cols;
+            const oldRows = trail.rows;
+            trail.w = dims.w;
+            trail.h = dims.h;
+            engine.resizeDirtTrail(trail, old, oldCols, oldRows, trail.cell * scaleX, trail.cell * scaleY);
+        }
+        // Three box passes ≈ a Gaussian of radius r + 0.5 cells.
+        const r = Math.max(1, Math.round(cfg.sigmaPx / trail.cell - 0.5));
+        engine.blurDirtTrailPass(trail, trail.levels, trail.tmpA, r, true);
+        engine.blurDirtTrailPass(trail, trail.tmpA, trail.tmpB, r, false);
+        engine.blurDirtTrailPass(trail, trail.tmpB, trail.tmpA, r, true);
+        engine.blurDirtTrailPass(trail, trail.tmpA, trail.tmpB, r, false);
+        engine.blurDirtTrailPass(trail, trail.tmpB, trail.tmpA, r, true);
+        engine.blurDirtTrailPass(trail, trail.tmpA, trail.potential, r, false);
+        const inv = 1 / trail.cap;
+        for (let i = 0; i < trail.potential.length; i++) {
+            trail.potential[i] *= inv;
+        }
+        trail.obstacles = [];
+        const keys = Object.keys(trail.obstacleKeys);
+        for (let ki = 0; ki < keys.length; ki++) {
+            const pos = engine.getMapBuildingPosition(keys[ki]);
+            trail.obstacles.push({ key: keys[ki], x: pos.x, y: pos.y });
+        }
+    },
+    blurDirtTrailPass: function(trail, src, dst, r, horiz) {
+        const len = horiz ? trail.cols : trail.rows;
+        const lines = horiz ? trail.rows : trail.cols;
+        const step = horiz ? 1 : trail.cols;
+        const lineStep = horiz ? trail.cols : 1;
+        const norm = 1 / (2 * r + 1);
+        for (let l = 0; l < lines; l++) {
+            const base = l * lineStep;
+            let sum = 0;
+            for (let k = -r; k <= r; k++) {
+                sum += src[base + Math.min(len - 1, Math.max(0, k)) * step];
             }
-            if ((road.progress || 0) <= 0) {
-                road.progress = 0;
-                road.decayAccMs = 0;
+            for (let k = 0; k < len; k++) {
+                dst[base + k * step] = sum * norm;
+                sum += src[base + Math.min(len - 1, k + r + 1) * step] - src[base + Math.max(0, k - r) * step];
             }
         }
+    },
+    makeDirtTrailTrace: function(flat) {
+        const cum = new Float64Array(flat.length / 2);
+        for (let k = 1; k < cum.length; k++) {
+            cum[k] = cum[k - 1] + Math.hypot(flat[k * 2] - flat[k * 2 - 2], flat[k * 2 + 1] - flat[k * 2 - 1]);
+        }
+        return { flat: flat, cum: cum, length: Math.max(1, cum[cum.length - 1]) };
+    },
+    getDirtTracePoint: function(trace, s) {
+        let lo = 0;
+        let hi = trace.cum.length - 1;
+        while (hi - lo > 1) {
+            const mid = (lo + hi) >> 1;
+            if (trace.cum[mid] < s) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        const u = Math.max(0, Math.min(1, (s - trace.cum[lo]) / (trace.cum[hi] - trace.cum[lo] || 1)));
+        return { x: trace.flat[lo * 2] + (trace.flat[hi * 2] - trace.flat[lo * 2]) * u, y: trace.flat[lo * 2 + 1] + (trace.flat[hi * 2 + 1] - trace.flat[lo * 2 + 1]) * u };
+    },
+    gaussianRandom: function() {
+        return Math.sqrt(-2 * Math.log(1 - Math.random())) * Math.cos(2 * Math.PI * Math.random());
+    },
+    /** Speed bonus from the wear under the carrier (carriers from before roads, or old saves, keep their snapshot). */
+    getCarrierRoadSpeedMult: function(carrier) {
+        if (carrier.trailX === undefined) {
+            return carrier.roadSpeedMult || 1;
+        }
+        if (carrier.trailFast) {
+            return carrier.trailFast.mult;
+        }
+        return engine.getDirtTrailSpeedMultAt(engine.getDirtTrail(), carrier.trailX, carrier.trailY);
+    },
+    applyDirtRoadOnSpawn: function(carrier, fromKey, toKey) {
+        carrier.fromKey = fromKey;
+        carrier.toKey = toKey;
+        if (!engine.isDirtRoadsUnlocked() || !fromKey || !toKey) {
+            return;
+        }
+        const trail = engine.getDirtTrail();
+        trail.obstacleKeys[fromKey] = true;
+        trail.obstacleKeys[toKey] = true;
+        const d = carrier.totalDist || 1;
+        carrier.trailX = carrier.fromX;
+        carrier.trailY = carrier.fromY;
+        carrier.trailHX = (carrier.toX - carrier.fromX) / d;
+        carrier.trailHY = (carrier.toY - carrier.fromY) / d;
+        carrier.trailWX = engine.gaussianRandom();
+        carrier.trailWY = engine.gaussianRandom();
+        carrier.trailWalked = 0;
+        if (engine.dirtTrailFastMode) {
+            engine.startCarrierFastTrail(carrier, trail);
+        } else {
+            engine.dirtTrailWalkTraces.set(carrier, [carrier.fromX, carrier.fromY]);
+        }
+    },
+    /** Moves a carrier `speed` px/s for `tickMs`; sets progress to 1 on arrival. */
+    advanceCarrier: function(c, speed, tickMs) {
+        if (c.trailX === undefined) {
+            c.progress = (c.progress || 0) + (speed * (tickMs / 1000)) / (c.totalDist || 1);
+            return;
+        }
+        if (engine.dirtTrailFastMode) {
+            engine.advanceCarrierFast(c, speed * (tickMs / 1000));
+            return;
+        }
+        if (c.trailFast) {
+            // Catch-up just ended mid-trip: pick up walking from where the replay had got to.
+            const p = engine.getCarrierFastTrailPoint(c, engine.getDirtTrail(), c.trailFast.s);
+            c.trailX = p.x;
+            c.trailY = p.y;
+            delete c.trailFast;
+        }
+        engine.walkCarrierOnTrail(c, speed, tickMs / 1000);
+    },
+    /**
+     * Fast mode (offline catch-up): the carrier replays the route's last walked path (either direction), or a straight
+     * line if none was recorded yet, at that path's average speed over the wear when it set off; the wear for the whole
+     * path is laid on arrival. Per tick this costs no more than the old straight roads.
+     */
+    startCarrierFastTrail: function(c, trail) {
+        const fwd = c.fromKey + ">" + c.toKey;
+        const back = c.toKey + ">" + c.fromKey;
+        const key = trail.traces[fwd] ? fwd : trail.traces[back] ? back : "";
+        const f = { key: key, reverse: key === back, s: 0, x0: c.trailX, y0: c.trailY, len: 1, mult: 1 };
+        c.trailFast = f;
+        // A trip that is partly replayed isn't a real walk, so it doesn't get recorded as the route's path.
+        engine.dirtTrailWalkTraces.delete(c);
+        f.len = key ? trail.traces[key].length : Math.hypot(c.toX - c.trailX, c.toY - c.trailY) || 1;
+        const steps = Math.max(1, Math.ceil(f.len / 3));
+        let time = 0;
+        for (let k = 0; k < steps; k++) {
+            const p = engine.getCarrierFastTrailPoint(c, trail, ((k + 0.5) / steps) * f.len);
+            time += 1 / engine.getDirtTrailSpeedMultAt(trail, p.x, p.y);
+        }
+        f.mult = steps / time;
+    },
+    getCarrierFastTrailPoint: function(c, trail, s) {
+        const f = c.trailFast;
+        const trace = f.key ? trail.traces[f.key] : null;
+        if (trace) {
+            return engine.getDirtTracePoint(trace, f.reverse ? trace.length - s : s);
+        }
+        const u = Math.min(1, s / f.len);
+        return { x: f.x0 + (c.toX - f.x0) * u, y: f.y0 + (c.toY - f.y0) * u };
+    },
+    advanceCarrierFast: function(c, dist) {
+        if (!c.trailFast) {
+            engine.startCarrierFastTrail(c, engine.getDirtTrail());
+        }
+        const f = c.trailFast;
+        f.s += dist;
+        if (f.s < f.len) {
+            c.progress = Math.max(c.progress || 0, Math.min(0.99, f.s / f.len));
+            return;
+        }
+        const trail = engine.getDirtTrail();
+        const steps = Math.ceil(f.len / engine.dirtTrailConfig.stepPx);
+        const amount = engine.dirtTrailConfig.wearPerPx * trail.wearPerStep * (f.len / steps);
+        for (let k = 0; k < steps; k++) {
+            const p = engine.getCarrierFastTrailPoint(c, trail, ((k + 0.5) / steps) * f.len);
+            engine.splatDirtTrail(trail, p.x, p.y, amount);
+        }
+        delete c.trailFast;
+        c.trailX = c.toX;
+        c.trailY = c.toY;
+        c.progress = 1;
+    },
+    /**
+     * One tick of an active walker, in steps of at most 3px: head for the destination, plus the slope of the blurred
+     * wear (fading out near the door), plus a slowly wandering random push; buildings on the way push it off.
+     * A carrier that has walked 2.5× its straight distance stops being distracted and heads straight in.
+     */
+    walkCarrierOnTrail: function(c, speed, seconds) {
+        const cfg = engine.dirtTrailConfig;
+        const trail = engine.getDirtTrail();
+        const base = speed / engine.getDirtTrailSpeedMultAt(trail, c.trailX, c.trailY);
+        const h = trail.cell;
+        const wearPerPx = cfg.wearPerPx * trail.wearPerStep;
+        const distracted = c.trailWalked <= 2.5 * (c.totalDist || 1);
+        const trace = engine.dirtTrailWalkTraces.get(c);
+        let t = seconds;
+        let dist = 0;
+        while (t > 0) {
+            const dx = c.toX - c.trailX;
+            const dy = c.toY - c.trailY;
+            dist = Math.sqrt(dx * dx + dy * dy);
+            const v = base * engine.getDirtTrailSpeedMultAt(trail, c.trailX, c.trailY);
+            const stepLen = Math.min(cfg.stepPx, v * t);
+            if (dist <= stepLen + 0.5) {
+                c.trailX = c.toX;
+                c.trailY = c.toY;
+                c.progress = 1;
+                if (trace) {
+                    trace.push(c.toX, c.toY);
+                    trail.traces[c.fromKey + ">" + c.toKey] = engine.makeDirtTrailTrace(trace);
+                    engine.dirtTrailWalkTraces.delete(c);
+                }
+                return;
+            }
+            const dt = stepLen / v;
+            t -= dt;
+            const ux = dx / dist;
+            const uy = dy / dist;
+            const near = distracted ? Math.min(1, dist / (2 * cfg.sigmaPx)) : 0;
+            const pxp = engine.sampleDirtTrailField(trail, trail.potential, c.trailX + h, c.trailY);
+            const pxm = engine.sampleDirtTrailField(trail, trail.potential, c.trailX - h, c.trailY);
+            const pyp = engine.sampleDirtTrailField(trail, trail.potential, c.trailX, c.trailY + h);
+            const pym = engine.sampleDirtTrailField(trail, trail.potential, c.trailX, c.trailY - h);
+            const gx = (pxp - pxm) / (2 * h);
+            const gy = (pyp - pym) / (2 * h);
+            // Foxes only wander on open grass; on a worn path they keep to it (a saturated path is flat on top, so
+            // wander there would just spread it wider and wider).
+            const wander = cfg.wander * Math.max(0, 1 - cfg.wanderTrailDamp * (pxp + pxm + pyp + pym) * 0.25);
+            // Ornstein-Uhlenbeck wander: unit variance per axis, decorrelating over wanderTimeS.
+            const relax = Math.min(1, dt / cfg.wanderTimeS);
+            const kick = Math.sqrt(2 * relax);
+            c.trailWX += -c.trailWX * relax + kick * engine.gaussianRandom();
+            c.trailWY += -c.trailWY * relax + kick * engine.gaussianRandom();
+            let ex = ux + near * (cfg.attraction * cfg.sigmaPx * gx + wander * c.trailWX);
+            let ey = uy + near * (cfg.attraction * cfg.sigmaPx * gy + wander * c.trailWY);
+            const R = cfg.buildingRadiusPx;
+            for (let oi = 0; oi < trail.obstacles.length; oi++) {
+                const ob = trail.obstacles[oi];
+                const ox = c.trailX - ob.x;
+                const oy = c.trailY - ob.y;
+                if (ob.key === c.fromKey || ob.key === c.toKey || ox * ox + oy * oy >= R * R) {
+                    continue;
+                }
+                const od = Math.sqrt(ox * ox + oy * oy) || 1;
+                ex += (ox / od) * ((R - od) / R) * 4;
+                ey += (oy / od) * ((R - od) / R) * 4;
+            }
+            const el = Math.sqrt(ex * ex + ey * ey) || 1;
+            const keep = Math.pow(cfg.inertia, dt / 0.1);
+            let hx = c.trailHX * keep + (ex / el) * (1 - keep);
+            let hy = c.trailHY * keep + (ey / el) * (1 - keep);
+            let hl = Math.sqrt(hx * hx + hy * hy) || 1;
+            hx /= hl;
+            hy /= hl;
+            const along = hx * ux + hy * uy;
+            if (along < 0.2) {
+                hx += ux * (0.2 - along) * 1.5;
+                hy += uy * (0.2 - along) * 1.5;
+                hl = Math.sqrt(hx * hx + hy * hy) || 1;
+                hx /= hl;
+                hy /= hl;
+            }
+            c.trailHX = hx;
+            c.trailHY = hy;
+            c.trailX += hx * stepLen;
+            c.trailY += hy * stepLen;
+            c.trailWalked += stepLen;
+            engine.splatDirtTrail(trail, c.trailX, c.trailY, wearPerPx * stepLen);
+            if (trace && Math.abs(trace[trace.length - 2] - c.trailX) + Math.abs(trace[trace.length - 1] - c.trailY) > cfg.tracePointPx) {
+                trace.push(c.trailX, c.trailY);
+            }
+        }
+        c.progress = Math.max(c.progress || 0, Math.min(0.99, 1 - dist / (c.totalDist || 1)));
     },
     getConstructionSourceBuildingKey: function(resourceType) {
         if (resourceType === "wood") {
@@ -9680,9 +10077,8 @@ let engine = {
         for (let i = 0; i < rh.constructionCarriers.length; i++) {
             const c = rh.constructionCarriers[i];
             const speed = engine.getFoxDenCarrierSpeed(c);
-            c.progress = (c.progress || 0) + (speed * (tickMs / 1000)) / (c.totalDist || 1);
+            engine.advanceCarrier(c, speed, tickMs);
             if (c.progress >= 1) {
-                engine.addDirtRoadProgress(c.fromKey, c.toKey);
                 const jobKey = c.jobKey || (c.unlockKey ? engine.getBuildingJobKey(c.unlockKey) : "");
                 if (jobKey.indexOf("building:") === 0) {
                     const unlockKey = jobKey.slice("building:".length);
@@ -9970,9 +10366,8 @@ let engine = {
         for (let i = 0; i < carriers.length; i++) {
             const c = carriers[i];
             const speed = engine.getBonfireCarrierSpeed(c);
-            c.progress = (c.progress || 0) + (speed * (tickMs / 1000)) / (c.totalDist || 1);
+            engine.advanceCarrier(c, speed, tickMs);
             if (c.progress >= 1) {
-                engine.addDirtRoadProgress(c.fromKey, c.toKey);
                 const heatPer = bonfireConfig.heatPerWood * (c.resourceType === "coal" ? bonfireConfig.heatPerCoalMult : 1) * engine.getBonfireHeatCardMultiplier();
                 bf.heat = (bf.heat || 0) + (c.amount || 0) * heatPer;
             } else {
@@ -10231,9 +10626,8 @@ let engine = {
         for (let i = 0; i < carriers.length; i++) {
             const c = carriers[i];
             const speed = engine.getMarketCarrierSpeed(c);
-            c.progress = (c.progress || 0) + (speed * (tickMs / 1000)) / (c.totalDist || 1);
+            engine.advanceCarrier(c, speed, tickMs);
             if (c.progress >= 1) {
-                engine.addDirtRoadProgress(c.fromKey, c.toKey);
                 const credit = (c.amount || 0) * engine.getMarketCreditPerUnit(c.resourceType);
                 market.credit = (market.credit || 0) + credit;
                 engine.grantMarketExp(credit);
@@ -10665,9 +11059,8 @@ let engine = {
         for (let i = 0; i < carriers.length; i++) {
             const c = carriers[i];
             const speed = engine.getInnCarrierSpeed(c);
-            c.progress = (c.progress || 0) + (speed * (tickMs / 1000)) / (c.totalDist || 1);
+            engine.advanceCarrier(c, speed, tickMs);
             if (c.progress >= 1) {
-                engine.addDirtRoadProgress(c.fromKey, c.toKey);
                 const cap = engine.getInnHotWaterCapacity();
                 inn.hotWater = Math.min(cap, (inn.hotWater || 0) + (c.amount || 0));
             } else {
@@ -10892,9 +11285,8 @@ let engine = {
         for (let i = 0; i < carriers.length; i++) {
             const c = carriers[i];
             const speed = engine.getCisternCarrierSpeed(c);
-            c.progress = (c.progress || 0) + (speed * (tickMs / 1000)) / (c.totalDist || 1);
+            engine.advanceCarrier(c, speed, tickMs);
             if (c.progress >= 1) {
-                engine.addDirtRoadProgress(c.fromKey, c.toKey);
                 engine.deliverCisternWaterToTarget(c.targetKey || "inn", c.amount || 0);
             } else {
                 next.push(c);

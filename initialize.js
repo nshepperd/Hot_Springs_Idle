@@ -305,7 +305,7 @@ let initials = {
             shrine: pb("shrine"),
             market: pb("market"),
             noodleBar: pb("noodleBar"),
-            dirtRoads: [],
+            dirtTrail: { cell: 4, cols: 0, rows: 0, w: 0, h: 0, wear: "", traces: {} },
             torii: {
                 assignedWorkers: 0,
                 workerPower: 0,
@@ -1212,8 +1212,8 @@ let initialize = {
                 atelier[k] = def[k];
             }
         }
-        if (!base.dirtRoads) {
-            base.dirtRoads = [];
+        if (!base.dirtTrail) {
+            base.dirtTrail = { cell: 4, cols: 0, rows: 0, w: 0, h: 0, wear: "", traces: {} };
         }
     },
     initializeGarden: function() {

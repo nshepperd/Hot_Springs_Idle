@@ -1759,54 +1759,6 @@ button {
     pointer-events: none;
 }
 
-.dirt-road-svg {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    z-index: 3;
-    pointer-events: none;
-    overflow: visible;
-}
-
-.dirt-road-hover-layer {
-    position: absolute;
-    inset: 0;
-    z-index: 4;
-    pointer-events: none;
-    overflow: visible;
-}
-
-.dirt-road-hotspot {
-    position: absolute;
-    width: 0;
-    height: 0;
-    pointer-events: none;
-}
-
-.dirt-road-hotspot-hit {
-    position: absolute;
-    left: 0;
-    top: 0;
-    height: 12px;
-    pointer-events: auto;
-    background: transparent;
-}
-
-.dirt-road-tooltip {
-    white-space: nowrap;
-    pointer-events: none;
-}
-
-.dirt-road-line {
-    fill: none;
-    stroke: #6b4423;
-    stroke-width: 5;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    vector-effect: non-scaling-stroke;
-}
-
 .resort-building-label {
     z-index: 12;
     text-shadow: 0 1px 3px #000;

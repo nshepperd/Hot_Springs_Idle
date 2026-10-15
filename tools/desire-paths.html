@@ -1,0 +1,1941 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Desire path sandbox</title>
+<style>
+    body { margin: 0; background: #1d2420; color: #e7e2d4; font: 13px/1.35 system-ui, sans-serif; }
+    #app { display: flex; gap: 14px; padding: 14px; align-items: flex-start; }
+    #mapWrap { position: relative; flex: none; }
+    #map { display: block; border-radius: 8px; box-shadow: 0 2px 12px #0008; }
+    #readout { position: absolute; left: 8px; top: 8px; background: #000a; padding: 3px 7px; border-radius: 4px; font-size: 12px; pointer-events: none; white-space: pre; }
+    #readout:empty { display: none; }
+    #panel { width: 440px; display: flex; flex-direction: column; gap: 10px; }
+    fieldset { border: 1px solid #3a463e; border-radius: 8px; padding: 8px 10px; margin: 0; }
+    legend { padding: 0 4px; color: #b9c7a8; }
+    .row { display: grid; grid-template-columns: 170px 1fr 60px; align-items: center; gap: 6px; margin: 3px 0; }
+    .row input[type=range], .row select { width: 100%; }
+    .val { text-align: right; font-variant-numeric: tabular-nums; }
+    button { background: #3b4a3f; color: inherit; border: 1px solid #556b5a; border-radius: 5px; padding: 3px 8px; cursor: pointer; }
+    button:hover { background: #4a5d4f; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; margin-top: 6px; }
+    td, th { padding: 2px 4px; text-align: right; white-space: nowrap; }
+    th { color: #b9c7a8; font-weight: normal; }
+    td:first-child, th:first-child { text-align: left; }
+    tr.route:hover { background: #2c3830; }
+    .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; }
+    .desc { color: #a9b3a0; font-size: 12px; margin: 6px 0; }
+    .good { color: #9fe39a; }
+    .bad { color: #f0a08a; }
+    input[type=number] { width: 50px; background: #141a16; color: inherit; border: 1px solid #3a463e; border-radius: 3px; }
+    select { background: #141a16; color: inherit; border: 1px solid #3a463e; border-radius: 4px; padding: 2px; }
+    .hint { color: #8d977f; font-size: 11.5px; margin-top: 6px; }
+    .buttons { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+    #clock { margin-left: auto; font-variant-numeric: tabular-nums; color: #cfd8c4; }
+    #summary { margin-top: 4px; }
+    #methodStatus { color: #8d977f; font-size: 11.5px; }
+    .checks label { margin-right: 10px; white-space: nowrap; }
+</style>
+</head>
+<body>
+<div id="app">
+    <div id="mapWrap">
+        <canvas id="map" width="690" height="690"></canvas>
+        <div id="readout"></div>
+    </div>
+    <div id="panel">
+        <fieldset>
+            <legend>Model</legend>
+            <select id="methodSelect" style="width:100%"></select>
+            <div id="methodDesc" class="desc"></div>
+            <div id="methodParams"></div>
+            <div id="methodStatus"></div>
+        </fieldset>
+        <fieldset>
+            <legend>Simulation</legend>
+            <div class="buttons">
+                <button id="pauseBtn">Pause</button>
+                <button id="resetBtn">Reset</button>
+                <button class="ff" data-ff="600">+10 min</button>
+                <button class="ff" data-ff="3600">+1 h</button>
+                <button class="ff" data-ff="21600">+6 h</button>
+                <span id="clock"></span>
+            </div>
+            <div id="simParams"></div>
+            <div class="row"><label>Layout</label><select id="presetSelect"></select><span></span></div>
+            <div class="checks">
+                <label><input type="checkbox" id="showFoxes" checked> foxes</label>
+                <label><input type="checkbox" id="showChords"> straight lines</label>
+                <label><input type="checkbox" id="showHeat"> heatmap</label>
+                <label><input type="checkbox" id="showCells"> raw cells</label>
+            </div>
+            <div class="hint">Drag a building to move it. Shift-click two buildings to add or remove a route. Double-click empty ground to add a building; double-click a building to remove it. Hover a route row to see the paths its foxes last took. Reset reseeds the traffic RNG identically, so every model sees the same fox sequence.</div>
+        </fieldset>
+        <fieldset>
+            <legend>Balance</legend>
+            <canvas id="chart" width="418" height="90"></canvas>
+            <div id="summary"></div>
+            <table>
+                <thead><tr><th>Route</th><th title="Trips per minute at traffic ×1">/min</th><th>trips</th><th title="The original game's progress for this route (straight-line model, shadow-simulated)">prog</th><th title="Recent trip time ÷ what the original straight-line game would have taken for the same trips. Below 1 = faster than the current balance.">vs game</th><th title="Recent trip time ÷ walking the straight line on fresh grass">vs grass</th></tr></thead>
+                <tbody id="routeRows"></tbody>
+            </table>
+        </fieldset>
+    </div>
+</div>
+<script>
+"use strict";
+
+const W = 690;
+const H = 690;
+const BASE_SPEED = 15; // px per second (resortData.foxDenCarrierSpeed)
+const DT = 0.1; // sim step, seconds
+const GAME_CAP = 140; // dirt road cap in the save (100 + 2 upgrades + card)
+const GAME_K = 0.005; // original speed bonus per progress
+const SEGS = 22; // polyline segments, same as engine.dirtRoadLayoutSegments
+const FINE = 2; // map px per pixel of the smoothed grid view
+
+const NAMES = { foxDen: "Fox Den", mage_tower: "Mage Tower", stonePile: "Stone Pile", inn: "Inn", torii: "Torii", atelier: "Atelier", bambooForest: "Bamboo Forest", garden: "Garden", bonfire: "Bonfire", pond: "Pond", cistern: "Cistern", market: "Market", shrine: "Shrine", noodleBar: "Noodle Bar" };
+const SAVE_POS = { foxDen: [346, 355], mage_tower: [320, 500], stonePile: [614, 407], inn: [160, 468], torii: [333, 608], atelier: [520, 459], bambooForest: [618, 498], garden: [493, 604], bonfire: [606, 621], pond: [459, 373], cistern: [558, 357], market: [53, 626], shrine: [42, 357], noodleBar: [266, 427] };
+// Trips per minute, measured by counting carrier spawns over the save's 21.5 h offline catch-up.
+const SAVE_ROUTES = [["mage_tower", "stonePile", 4.2], ["bambooForest", "market", 2.24], ["inn", "mage_tower", 1.79], ["cistern", "noodleBar", 1.24], ["mage_tower", "torii", 0.93], ["cistern", "inn", 0.78], ["bonfire", "market", 0.66], ["cistern", "torii", 0.62]];
+// Every road the save has ever used (the rest are construction hauls, rare in practice).
+const SAVE_ALL_PAIRS = [["atelier", "bambooForest"], ["atelier", "stonePile"], ["garden", "stonePile"], ["inn", "stonePile"], ["bambooForest", "mage_tower"], ["bambooForest", "inn"], ["bambooForest", "bonfire"], ["atelier", "bonfire"], ["bambooForest", "pond"], ["pond", "stonePile"], ["cistern", "stonePile"], ["atelier", "inn"], ["bambooForest", "torii"], ["stonePile", "torii"], ["market", "stonePile"], ["bambooForest", "shrine"], ["shrine", "stonePile"], ["atelier", "shrine"], ["atelier", "mage_tower"], ["bambooForest", "noodleBar"], ["noodleBar", "stonePile"]];
+
+const PRESETS = {
+    save: { label: "Your save: 8 active routes (measured traffic)", build: () => savePreset(false) },
+    saveAll: { label: "Your save: all 29 roads (+0.4/min on the rare ones)", build: () => savePreset(true) },
+    hub: { label: "Hub and spokes (one source, 8 targets)", build: hubPreset },
+    random: { label: "Random (12 buildings, 14 routes)", build: randomPreset }
+};
+
+/* ---------- seeded RNGs: traffic has its own stream so every model (noisy or not) sees the same foxes ---------- */
+
+let rngState = 1;
+let noiseState = 1;
+function mulberry(s) {
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+function rand() {
+    rngState = (rngState + 0x6D2B79F5) | 0;
+    return mulberry(rngState);
+}
+function noiseRand() {
+    noiseState = (noiseState + 0x6D2B79F5) | 0;
+    return mulberry(noiseState);
+}
+function noiseGauss() {
+    return Math.sqrt(-2 * Math.log(1 - noiseRand())) * Math.cos(2 * Math.PI * noiseRand());
+}
+
+function clamp(v, lo, hi) {
+    return v < lo ? lo : v > hi ? hi : v;
+}
+
+/* ---------- sim core ---------- */
+
+const sim = {
+    t: 0,
+    buildings: [],
+    routes: [],
+    foxes: [],
+    method: null,
+    paused: false,
+    fastForwarding: false,
+    stepAcc: 0,
+    history: [],
+    historyAcc: 0,
+    nextRouteId: 1,
+    nextBuildingId: 1,
+    hoverRoute: null,
+    pendingBuilding: null,
+    drag: null,
+    lagging: false,
+    p: {}
+};
+
+const simParams = [
+    { key: "speed", label: "Sim speed", min: 1, max: 1000, step: 1, value: 30, log: true, fmt: v => v + "×" },
+    { key: "traffic", label: "Traffic ×", min: 0.1, max: 10, step: 0.1, value: 1, log: true },
+    { key: "buildingR", label: "Building radius (px)", min: 6, max: 30, step: 1, value: 16, layout: true },
+    { key: "oldDeposit", label: "Game progress per trip", min: 1, max: 2, step: 1, value: 2, title: "+1 per delivery, +2 with Sprinkle Ore on Roads. Drives the 'vs game' baseline and the polyline model." }
+];
+
+function makeBuilding(key, name, x, y) {
+    return { id: sim.nextBuildingId++, key: key, name: name, x: x, y: y, idx: 0 };
+}
+
+function makeRoute(a, b, rate) {
+    if (a.key > b.key) {
+        [a, b] = [b, a];
+    }
+    return { id: sim.nextRouteId++, a: a, b: b, key: a.key + "|" + b.key, rate: rate, color: "#fff", chord: 1, progress: 0, acc: 0, trips: 0, emaActual: 0, emaOld: 0, lastPath: [null, null], cells: null };
+}
+
+function savePreset(all) {
+    const byKey = {};
+    const buildings = Object.keys(SAVE_POS).map(k => (byKey[k] = makeBuilding(k, NAMES[k], SAVE_POS[k][0], SAVE_POS[k][1])));
+    const routes = SAVE_ROUTES.map(r => makeRoute(byKey[r[0]], byKey[r[1]], r[2]));
+    if (all) {
+        for (const pair of SAVE_ALL_PAIRS) {
+            routes.push(makeRoute(byKey[pair[0]], byKey[pair[1]], 0.4));
+        }
+    }
+    return { buildings, routes };
+}
+
+function hubPreset() {
+    const buildings = [makeBuilding("source", "Source", 100, 345)];
+    const routes = [];
+    for (let i = 0; i < 8; i++) {
+        const ang = -0.9 + (1.8 * i) / 7;
+        const b = makeBuilding("t" + i, "Target " + (i + 1), 100 + 520 * Math.cos(ang), 345 + 300 * Math.sin(ang));
+        buildings.push(b);
+        routes.push(makeRoute(buildings[0], b, 1.2));
+    }
+    return { buildings, routes };
+}
+
+function randomPreset() {
+    const buildings = [];
+    while (buildings.length < 12) {
+        const x = 50 + Math.random() * (W - 100);
+        const y = 50 + Math.random() * (H - 100);
+        if (buildings.every(b => Math.hypot(b.x - x, b.y - y) > 90)) {
+            buildings.push(makeBuilding("r" + buildings.length, "Spot " + (buildings.length + 1), x, y));
+        }
+    }
+    const routes = [];
+    const seen = {};
+    while (routes.length < 14) {
+        const a = buildings[Math.floor(Math.random() * buildings.length)];
+        const b = buildings[Math.floor(Math.random() * buildings.length)];
+        const key = [a.key, b.key].sort().join("|");
+        if (a !== b && !seen[key]) {
+            seen[key] = true;
+            routes.push(makeRoute(a, b, Math.round((0.3 + Math.random() * Math.random() * 4) * 10) / 10));
+        }
+    }
+    return { buildings, routes };
+}
+
+function loadPreset(key) {
+    const preset = PRESETS[key].build();
+    sim.buildings = preset.buildings;
+    sim.routes = preset.routes;
+    renumberBuildings();
+    resetSim();
+    rebuildRouteTable();
+}
+
+function renumberBuildings() {
+    sim.buildings.forEach((b, i) => {
+        b.idx = i;
+    });
+    for (const r of sim.routes) {
+        r.chord = Math.max(1, Math.hypot(r.b.x - r.a.x, r.b.y - r.a.y));
+    }
+}
+
+function resetSim() {
+    rngState = 12345;
+    noiseState = 777;
+    sim.t = 0;
+    sim.foxes = [];
+    sim.history = [];
+    sim.historyAcc = 0;
+    sim.stepAcc = 0;
+    for (const r of sim.routes) {
+        r.progress = 0;
+        r.acc = rand();
+        r.trips = 0;
+        r.emaActual = 0;
+        r.emaOld = 0;
+        r.lastPath = [null, null];
+    }
+    sim.method.init();
+}
+
+function layoutChanged() {
+    renumberBuildings();
+    sim.method.onLayoutChanged();
+}
+
+function stepSim() {
+    const traffic = sim.p.traffic;
+    for (const r of sim.routes) {
+        r.acc += (r.rate / 60) * traffic * DT * (0.5 + rand());
+        while (r.acc >= 1) {
+            r.acc -= 1;
+            spawnFox(r);
+        }
+        r.progress = Math.max(0, r.progress - DT / 30);
+    }
+    sim.method.update(DT);
+    const foxes = sim.foxes;
+    for (let i = 0; i < foxes.length; i++) {
+        if (sim.method.step(foxes[i], DT)) {
+            arrive(foxes[i]);
+            foxes[i] = foxes[foxes.length - 1];
+            foxes.pop();
+            i--;
+        }
+    }
+    sim.t += DT;
+    sim.historyAcc += DT;
+    if (sim.historyAcc >= 10) {
+        sim.historyAcc -= 10;
+        const o = overall();
+        sim.history.push(o);
+        if (sim.history.length > 2160) {
+            sim.history.shift();
+        }
+    }
+}
+
+function spawnFox(r) {
+    const dir = rand() < 0.5 ? 0 : 1;
+    const from = dir ? r.b : r.a;
+    const to = dir ? r.a : r.b;
+    const fox = {
+        route: r,
+        dir: dir,
+        from: from,
+        to: to,
+        x: from.x,
+        y: from.y,
+        t0: sim.t,
+        oldTime: r.chord / (BASE_SPEED * (1 + GAME_K * Math.min(GAME_CAP, r.progress)))
+    };
+    sim.method.spawn(fox);
+    sim.foxes.push(fox);
+}
+
+function arrive(fox) {
+    const r = fox.route;
+    const a = Math.max(0.1, 1 / (r.trips + 1));
+    r.trips++;
+    r.emaActual += a * (sim.t - fox.t0 - r.emaActual);
+    r.emaOld += a * (fox.oldTime - r.emaOld);
+    r.progress = Math.min(GAME_CAP, r.progress + sim.p.oldDeposit);
+    sim.method.arrive(fox);
+}
+
+/** Traffic-weighted trip time over the routes that have finished a trip, relative to the original game and to fresh grass. */
+function overall() {
+    let actual = 0;
+    let old = 0;
+    let grass = 0;
+    for (const r of sim.routes) {
+        if (r.trips > 0) {
+            actual += r.rate * r.emaActual;
+            old += r.rate * r.emaOld;
+            grass += r.rate * (r.chord / BASE_SPEED);
+        }
+    }
+    return { vsGame: old > 0 ? actual / old : 1, vsGrass: grass > 0 ? actual / grass : 1 };
+}
+
+/* ---------- shared grid helpers ---------- */
+
+function createGrid(cell) {
+    const cols = Math.ceil(W / cell);
+    const rows = Math.ceil(H / cell);
+    const grid = { cell: cell, cols: cols, rows: rows, n: cols * rows, level: new Float32Array(cols * rows), obs: new Int16Array(cols * rows), decayAcc: 0 };
+    grid.raw = makeLayer(cols, rows);
+    // The smooth view samples the field bilinearly at half map resolution, then colours it, so trail edges follow contours instead of cell steps.
+    grid.fine = makeLayer(W / FINE, H / FINE);
+    grid.fineU = new Int32Array(W / FINE);
+    grid.fineFu = new Float32Array(W / FINE);
+    grid.fineV = new Int32Array(H / FINE);
+    grid.fineFv = new Float32Array(H / FINE);
+    for (let p = 0; p < W / FINE; p++) {
+        const u = clamp(((p + 0.5) * FINE) / cell - 0.5, 0, cols - 1.001);
+        grid.fineU[p] = u | 0;
+        grid.fineFu[p] = u - (u | 0);
+    }
+    for (let p = 0; p < H / FINE; p++) {
+        const v = clamp(((p + 0.5) * FINE) / cell - 0.5, 0, rows - 1.001);
+        grid.fineV[p] = v | 0;
+        grid.fineFv[p] = v - (v | 0);
+    }
+    rebuildObstacles(grid);
+    return grid;
+}
+
+function makeLayer(w, h) {
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const c = canvas.getContext("2d");
+    return { canvas: canvas, ctx: c, img: c.createImageData(w, h), w: w, h: h };
+}
+
+/** Cells inside a building belong to it (impassable except to foxes starting or ending there). */
+function rebuildObstacles(g) {
+    g.obs.fill(-1);
+    const r = sim.p.buildingR;
+    for (const b of sim.buildings) {
+        const c0 = Math.max(0, Math.floor((b.x - r) / g.cell));
+        const c1 = Math.min(g.cols - 1, Math.floor((b.x + r) / g.cell));
+        const r0 = Math.max(0, Math.floor((b.y - r) / g.cell));
+        const r1 = Math.min(g.rows - 1, Math.floor((b.y + r) / g.cell));
+        for (let y = r0; y <= r1; y++) {
+            for (let x = c0; x <= c1; x++) {
+                const dx = (x + 0.5) * g.cell - b.x;
+                const dy = (y + 0.5) * g.cell - b.y;
+                if (dx * dx + dy * dy <= r * r) {
+                    g.obs[y * g.cols + x] = b.idx;
+                }
+            }
+        }
+    }
+}
+
+function cellAt(g, x, y) {
+    return clamp(Math.floor(y / g.cell), 0, g.rows - 1) * g.cols + clamp(Math.floor(x / g.cell), 0, g.cols - 1);
+}
+
+/** Adds `center` to a cell and `nbr` to each of its 8 neighbours (clamped to cap, or saturating toward it). */
+function stampCell(g, ci, center, nbr, cap, saturate) {
+    const cx = ci % g.cols;
+    const cy = (ci / g.cols) | 0;
+    const L = g.level;
+    for (let dy = -1; dy <= 1; dy++) {
+        const y = cy + dy;
+        if (y < 0 || y >= g.rows) {
+            continue;
+        }
+        for (let dx = -1; dx <= 1; dx++) {
+            const x = cx + dx;
+            const w = dx || dy ? nbr : center;
+            if (x < 0 || x >= g.cols || w <= 0) {
+                continue;
+            }
+            const i = y * g.cols + x;
+            L[i] = saturate ? L[i] + w * Math.max(0, 1 - L[i] / cap) : Math.min(cap, L[i] + w);
+        }
+    }
+}
+
+/** Linear decay (levels per 30 s) and optional exponential half-life, applied once per simulated second. */
+function decayGrid(g, dt, per30, halfLifeMin) {
+    g.decayAcc += dt;
+    if (g.decayAcc < 1) {
+        return;
+    }
+    const span = g.decayAcc;
+    g.decayAcc = 0;
+    const lin = (per30 * span) / 30;
+    const mul = halfLifeMin > 0 ? Math.pow(0.5, span / (halfLifeMin * 60)) : 1;
+    const L = g.level;
+    for (let i = 0; i < L.length; i++) {
+        const v = L[i] * mul - lin;
+        L[i] = v > 0 ? v : 0;
+    }
+}
+
+/** Share of the map worn to at least 20% of the cap (roughly what reads as path rather than grass). */
+function wornArea(g, cap) {
+    let worn = 0;
+    for (let i = 0; i < g.n; i++) {
+        if (g.level[i] >= 0.2 * cap) {
+            worn++;
+        }
+    }
+    return ((100 * worn) / g.n).toFixed(1) + "% of map";
+}
+
+const HEAT_STOPS =[[0, 0, 4], [87, 16, 110], [188, 55, 84], [249, 142, 9], [252, 255, 164]];
+
+function colourTrail(d, o, v, heat) {
+    if (heat) {
+        const s = v * 4;
+        const k = Math.min(3, Math.floor(s));
+        const f = s - k;
+        const c0 = HEAT_STOPS[k];
+        const c1 = HEAT_STOPS[k + 1];
+        d[o] = c0[0] + (c1[0] - c0[0]) * f;
+        d[o + 1] = c0[1] + (c1[1] - c0[1]) * f;
+        d[o + 2] = c0[2] + (c1[2] - c0[2]) * f;
+        d[o + 3] = v > 0.004 ? 225 : 0;
+        return;
+    }
+    // Trampled grass -> bare dirt -> packed, lighter dirt.
+    const a = clamp((v - 0.02) / 0.5, 0, 1);
+    const lo = v < 0.5 ? v / 0.5 : 1;
+    const hi = v < 0.5 ? 0 : (v - 0.5) / 0.5;
+    d[o] = 128 + (122 - 128) * lo + (168 - 122) * hi;
+    d[o + 1] = 132 + (86 - 132) * lo + (132 - 86) * hi;
+    d[o + 2] = 74 + (50 - 74) * lo + (90 - 50) * hi;
+    d[o + 3] = 255 * a * a * (3 - 2 * a);
+}
+
+function drawGridField(ctx, g, field, scale) {
+    const heat = ui.showHeat.checked;
+    const raw = ui.showCells.checked;
+    const layer = raw ? g.raw : g.fine;
+    const d = layer.img.data;
+    const inv = 1 / scale;
+    if (raw) {
+        for (let i = 0; i < g.n; i++) {
+            colourTrail(d, i * 4, Math.min(1, field[i] * inv), heat);
+        }
+    } else {
+        const cols = g.cols;
+        for (let py = 0; py < layer.h; py++) {
+            const row = g.fineV[py] * cols;
+            const fv = g.fineFv[py];
+            for (let px = 0; px < layer.w; px++) {
+                const i = row + g.fineU[px];
+                const fu = g.fineFu[px];
+                const v = (field[i] * (1 - fu) + field[i + 1] * fu) * (1 - fv) + (field[i + cols] * (1 - fu) + field[i + cols + 1] * fu) * fv;
+                colourTrail(d, (py * layer.w + px) * 4, Math.min(1, v * inv), heat);
+            }
+        }
+    }
+    layer.ctx.putImageData(layer.img, 0, 0);
+    ctx.imageSmoothingEnabled = !raw;
+    ctx.drawImage(layer.canvas, 0, 0, raw ? g.cols * g.cell : W, raw ? g.rows * g.cell : H);
+    ctx.imageSmoothingEnabled = true;
+}
+
+/** Moves a fox along a point list at the speed of the cell under it; stamps each newly entered cell. */
+function walkPoints(fox, g, speed, dt, stamp) {
+    let move = speed * dt;
+    const pts = fox.pts;
+    while (move > 0 && fox.k < pts.length - 1) {
+        const tx = pts[fox.k + 1][0];
+        const ty = pts[fox.k + 1][1];
+        const dx = tx - fox.x;
+        const dy = ty - fox.y;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d <= move) {
+            fox.x = tx;
+            fox.y = ty;
+            fox.k++;
+            move -= d;
+        } else {
+            fox.x += (dx / d) * move;
+            fox.y += (dy / d) * move;
+            move = 0;
+        }
+    }
+    const ci = cellAt(g, fox.x, fox.y);
+    if (ci !== fox.cell) {
+        fox.cell = ci;
+        stamp(ci);
+    }
+    return fox.k >= pts.length - 1;
+}
+
+/* ---------- model 1: grid + A* ---------- */
+
+const MOVES8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]].map(m => ({ dx: m[0], dy: m[1], len: Math.hypot(m[0], m[1]), knight: false }));
+// Knight moves straddle two cells; a line from centre to centre crosses exactly these at t = 1/3 and 2/3.
+const MOVES16 = MOVES8.concat([[1, 2], [-1, 2], [1, -2], [-1, -2], [2, 1], [2, -1], [-2, 1], [-2, -1]].map(m => {
+    const sx = Math.sign(m[0]);
+    const sy = Math.sign(m[1]);
+    const mids = Math.abs(m[0]) === 1 ? [[0, sy], [m[0], sy]] : [[sx, 0], [sx, m[1]]];
+    return { dx: m[0], dy: m[1], len: Math.hypot(m[0], m[1]), knight: true, m1x: mids[0][0], m1y: mids[0][1], m2x: mids[1][0], m2y: mids[1][1] };
+}));
+
+function createSearch(g) {
+    return { gs: new Float64Array(g.n), par: new Int32Array(g.n), seen: new Uint32Array(g.n), closed: new Uint32Array(g.n), inv: new Float32Array(g.n), gen: 0, hf: new Float64Array(g.n * 16 + 16), hi: new Int32Array(g.n * 16 + 16), size: 0 };
+}
+
+function heapPush(S, f, i) {
+    let n = S.size++;
+    while (n > 0) {
+        const p = (n - 1) >> 1;
+        if (S.hf[p] <= f) {
+            break;
+        }
+        S.hf[n] = S.hf[p];
+        S.hi[n] = S.hi[p];
+        n = p;
+    }
+    S.hf[n] = f;
+    S.hi[n] = i;
+}
+
+function heapPop(S) {
+    const top = S.hi[0];
+    const n = --S.size;
+    if (n > 0) {
+        const f = S.hf[n];
+        const i = S.hi[n];
+        let k = 0;
+        for (;;) {
+            let c = 2 * k + 1;
+            if (c >= n) {
+                break;
+            }
+            if (c + 1 < n && S.hf[c + 1] < S.hf[c]) {
+                c++;
+            }
+            if (S.hf[c] >= f) {
+                break;
+            }
+            S.hf[k] = S.hf[c];
+            S.hi[k] = S.hi[c];
+            k = c;
+        }
+        S.hf[k] = f;
+        S.hi[k] = i;
+    }
+    return top;
+}
+
+/**
+ * Fastest route between two buildings. Step cost = length / speed, averaging the cells the step crosses.
+ * A tiny cross-track term in the priority breaks the many exact ties on open grass toward the straight line,
+ * so fresh routes don't all come out as one long dogleg.
+ * Perception noise: each plan sees every cell's cost scaled by exp(noise·n), where n is smooth value noise in
+ * [-1, 1] with features about `noiseScale` px across, drawn fresh per plan. Only the plan is fooled; the fox
+ * still walks at the true cell speeds.
+ */
+function gridAStar(g, S, from, to, P) {
+    const cols = g.cols;
+    const rows = g.rows;
+    const cell = g.cell;
+    const inv = S.inv;
+    for (let i = 0; i < g.n; i++) {
+        inv[i] = 1 / (1 + P.k * Math.min(P.cap, g.level[i]));
+    }
+    if (P.noise > 0) {
+        applyPerceptionNoise(g, inv, P.noise, P.noiseScale);
+    }
+    const minInv = Math.exp(-P.noise) / (1 + P.k * P.cap);
+    const gen = ++S.gen;
+    const start = cellAt(g, from.x, from.y);
+    const goal = cellAt(g, to.x, to.y);
+    const sx = start % cols;
+    const sy = (start / cols) | 0;
+    const gx = goal % cols;
+    const gy = (goal / cols) | 0;
+    const ll = Math.hypot(gx - sx, gy - sy) || 1;
+    const lx = (gx - sx) / ll;
+    const ly = (gy - sy) / ll;
+    const eps = 1e-3 * minInv * cell;
+    const passable = i => g.obs[i] < 0 || g.obs[i] === from.idx || g.obs[i] === to.idx;
+    const prio = (i, gv) => {
+        const x = i % cols;
+        const y = (i / cols) | 0;
+        return gv + Math.hypot(x - gx, y - gy) * cell * minInv + eps * Math.abs((x - sx) * ly - (y - sy) * lx);
+    };
+    const moves = P.moves === 16 ? MOVES16 : MOVES8;
+    S.size = 0;
+    S.gs[start] = 0;
+    S.seen[start] = gen;
+    S.par[start] = -1;
+    heapPush(S, prio(start, 0), start);
+    let found = false;
+    while (S.size > 0) {
+        const cur = heapPop(S);
+        if (S.closed[cur] === gen) {
+            continue;
+        }
+        S.closed[cur] = gen;
+        if (cur === goal) {
+            found = true;
+            break;
+        }
+        const cx = cur % cols;
+        const cy = (cur / cols) | 0;
+        for (let mi = 0; mi < moves.length; mi++) {
+            const m = moves[mi];
+            const nx = cx + m.dx;
+            const ny = cy + m.dy;
+            if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) {
+                continue;
+            }
+            const ni = ny * cols + nx;
+            if (!passable(ni)) {
+                continue;
+            }
+            let cost;
+            if (m.knight) {
+                const a = (cy + m.m1y) * cols + cx + m.m1x;
+                const b = (cy + m.m2y) * cols + cx + m.m2x;
+                if (!passable(a) || !passable(b)) {
+                    continue;
+                }
+                cost = m.len * cell * (inv[cur] / 6 + inv[a] / 3 + inv[b] / 3 + inv[ni] / 6);
+            } else {
+                cost = m.len * cell * (inv[cur] + inv[ni]) * 0.5;
+            }
+            const ng = S.gs[cur] + cost;
+            if (S.seen[ni] !== gen || ng < S.gs[ni]) {
+                S.seen[ni] = gen;
+                S.gs[ni] = ng;
+                S.par[ni] = cur;
+                heapPush(S, prio(ni, ng), ni);
+            }
+        }
+    }
+    if (!found) {
+        return [[from.x, from.y], [to.x, to.y]];
+    }
+    const cells = [];
+    for (let c = goal; c !== -1; c = S.par[c]) {
+        cells.push(c);
+    }
+    cells.reverse();
+    let pts = cells.map(c => [((c % cols) + 0.5) * cell, (((c / cols) | 0) + 0.5) * cell]);
+    if (P.smooth === "pull") {
+        pts = stringPull(g, S, cells, pts, passable);
+    }
+    pts[0] = [from.x, from.y];
+    pts[pts.length - 1] = [to.x, to.y];
+    return pts;
+}
+
+function applyPerceptionNoise(g, inv, amp, scale) {
+    const lw = Math.ceil(W / scale) + 2;
+    const lh = Math.ceil(H / scale) + 2;
+    const lattice = new Float32Array(lw * lh);
+    for (let i = 0; i < lattice.length; i++) {
+        lattice[i] = noiseRand() * 2 - 1;
+    }
+    for (let y = 0; y < g.rows; y++) {
+        const v = ((y + 0.5) * g.cell) / scale;
+        const j0 = v | 0;
+        let fv = v - j0;
+        fv = fv * fv * (3 - 2 * fv);
+        for (let x = 0; x < g.cols; x++) {
+            const u = ((x + 0.5) * g.cell) / scale;
+            const i0 = u | 0;
+            let fu = u - i0;
+            fu = fu * fu * (3 - 2 * fu);
+            const l = j0 * lw + i0;
+            const n = (lattice[l] * (1 - fu) + lattice[l + 1] * fu) * (1 - fv) + (lattice[l + lw] * (1 - fu) + lattice[l + lw + 1] * fu) * fv;
+            inv[y * g.cols + x] *= Math.exp(amp * n);
+        }
+    }
+}
+
+function lineCost(g, inv, p, q, passable) {
+    const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
+    const steps = Math.max(1, Math.ceil(len / (g.cell * 0.5)));
+    let sum = 0;
+    for (let s = 0; s < steps; s++) {
+        const t = (s + 0.5) / steps;
+        const ci = cellAt(g, p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t);
+        if (!passable(ci)) {
+            return Infinity;
+        }
+        sum += inv[ci];
+    }
+    return (sum * len) / steps;
+}
+
+/** Any-angle post-pass: skip ahead along the path wherever the straight cut is no slower than the grid path. */
+function stringPull(g, S, cells, pts, passable) {
+    const out = [pts[0]];
+    const last = pts.length - 1;
+    let i = 0;
+    while (i < last) {
+        let best = i + 1;
+        for (let j = i + 2; j <= last; j++) {
+            if (lineCost(g, S.inv, pts[i], pts[j], passable) <= S.gs[cells[j]] - S.gs[cells[i]] + 1e-6) {
+                best = j;
+            } else if (j - best > 6) {
+                break;
+            }
+        }
+        out.push(pts[best]);
+        i = best;
+    }
+    return out;
+}
+
+const gridModel = {
+    key: "grid",
+    name: "Grid + A* (fastest route, 3×3 wear)",
+    desc: "The map is a grid of trail cells; a cell's speed is 1 + k·level. Each fox plans the fastest route with A*. Every cell a fox enters gets +deposit, and its 8 neighbours get +deposit·w (that spill is what lets corners get cut). All cells decay.",
+    params: [
+        { key: "cell", label: "Cell size (px)", min: 4, max: 16, step: 1, value: 8, reset: true },
+        { key: "moves", label: "Move set", options: [[8, "8 directions"], [16, "16 directions (+knight)"]], value: 16 },
+        { key: "smooth", label: "Path smoothing", options: [["none", "none (grid moves)"], ["pull", "string-pull (any-angle)"]], value: "pull" },
+        { key: "deposit", label: "Deposit (centre cell)", min: 0.1, max: 5, step: 0.1, value: 1 },
+        { key: "nbr", label: "Neighbour weight (3×3)", min: 0, max: 1, step: 0.05, value: 1 },
+        { key: "cap", label: "Level cap", min: 10, max: 400, step: 10, value: 100 },
+        { key: "k", label: "Speed per level (k)", min: 0, max: 0.03, step: 0.0005, value: 0.007, title: "Max speed = 1 + k·cap. Default matches the game's ×1.7." },
+        { key: "decay", label: "Linear decay (per 30 s)", min: 0, max: 10, step: 0.1, value: 1 },
+        { key: "halfLife", label: "Half-life (min, 0 = off)", min: 0, max: 120, step: 1, value: 0 },
+        { key: "replan", label: "Re-plan interval (s)", min: 0, max: 30, step: 0.5, value: 2, title: "Foxes on the same route and direction reuse a plan this young. 0 = plan every fox." },
+        { key: "noise", label: "Perception noise", min: 0, max: 1, step: 0.05, value: 0, title: "Each plan misjudges cell costs by a smooth random factor exp(±noise), e.g. 0.3 = up to ±35%. The fox still walks at the real speeds." },
+        { key: "noiseScale", label: "Noise feature size (px)", min: 10, max: 300, step: 5, value: 60 }
+    ],
+    init() {
+        this.g = createGrid(this.p.cell);
+        this.S = createSearch(this.g);
+        this.cache = new Map();
+        this.plans = 0;
+        this.planMs = 0;
+    },
+    onLayoutChanged() {
+        rebuildObstacles(this.g);
+        this.cache.clear();
+    },
+    update(dt) {
+        decayGrid(this.g, dt, this.p.decay, this.p.halfLife);
+    },
+    spawn(fox) {
+        const key = fox.route.id * 2 + fox.dir;
+        let plan = this.cache.get(key);
+        if (!plan || sim.t - plan.t >= this.p.replan) {
+            const t0 = performance.now();
+            plan = { t: sim.t, pts: gridAStar(this.g, this.S, fox.from, fox.to, this.p) };
+            this.planMs += performance.now() - t0;
+            this.plans++;
+            this.cache.set(key, plan);
+        }
+        fox.pts = plan.pts;
+        fox.k = 0;
+        fox.cell = -1;
+    },
+    step(fox, dt) {
+        const P = this.p;
+        const g = this.g;
+        const speed = BASE_SPEED * (1 + P.k * Math.min(P.cap, g.level[cellAt(g, fox.x, fox.y)]));
+        return walkPoints(fox, g, speed, dt, ci => stampCell(g, ci, P.deposit, P.deposit * P.nbr, P.cap, false));
+    },
+    arrive(fox) {
+        fox.route.lastPath[fox.dir] = fox.pts;
+    },
+    drawGround(ctx) {
+        drawGridField(ctx, this.g, this.g.level, this.p.cap);
+    },
+    probe(x, y) {
+        const L = this.g.level[cellAt(this.g, x, y)];
+        return "level " + L.toFixed(1) + " / " + this.p.cap + "   speed ×" + (1 + this.p.k * Math.min(this.p.cap, L)).toFixed(2);
+    },
+    status() {
+        return "A* plans: " + this.plans + (this.plans ? ", avg " + (this.planMs / this.plans).toFixed(2) + " ms" : "") + " · worn area: " + wornArea(this.g, this.p.cap);
+    }
+};
+
+/* ---------- model 2: active walkers (Helbing et al. 1997) ---------- */
+
+function blurPass(src, dst, cols, rows, r, horiz) {
+    const len = horiz ? cols : rows;
+    const lines = horiz ? rows : cols;
+    const step = horiz ? 1 : cols;
+    const lineStep = horiz ? cols : 1;
+    const norm = 1 / (2 * r + 1);
+    for (let l = 0; l < lines; l++) {
+        const base = l * lineStep;
+        let sum = 0;
+        for (let k = -r; k <= r; k++) {
+            sum += src[base + clamp(k, 0, len - 1) * step];
+        }
+        for (let k = 0; k < len; k++) {
+            dst[base + k * step] = sum * norm;
+            sum += src[base + Math.min(len - 1, k + r + 1) * step] - src[base + Math.max(0, k - r) * step];
+        }
+    }
+}
+
+function sampleField(F, g, x, y) {
+    const u = clamp(x / g.cell - 0.5, 0, g.cols - 1.001);
+    const v = clamp(y / g.cell - 0.5, 0, g.rows - 1.001);
+    const i0 = u | 0;
+    const j0 = v | 0;
+    const fu = u - i0;
+    const fv = v - j0;
+    const i = j0 * g.cols + i0;
+    return (F[i] * (1 - fu) + F[i + 1] * fu) * (1 - fv) + (F[i + g.cols] * (1 - fu) + F[i + g.cols + 1] * fu) * fv;
+}
+
+const walkerModel = {
+    key: "walker",
+    name: "Active walkers (Helbing 1997, no planning)",
+    desc: "No route planning: each fox heads straight for its destination, but is steered up the gradient of a blurred 'trail potential' (how much worn ground it can see within σ). Ground wear saturates toward the cap and decays. This is the classic desire-path model from the pedestrian-dynamics literature.",
+    params: [
+        { key: "cell", label: "Cell size (px)", min: 4, max: 16, step: 1, value: 6, reset: true },
+        { key: "deposit", label: "Deposit (centre cell)", min: 0.1, max: 10, step: 0.1, value: 2 },
+        { key: "nbr", label: "Neighbour weight (3×3)", min: 0, max: 1, step: 0.05, value: 0.5 },
+        { key: "cap", label: "Level cap", min: 10, max: 400, step: 10, value: 100 },
+        { key: "k", label: "Speed per level (k)", min: 0, max: 0.03, step: 0.0005, value: 0.007 },
+        { key: "decay", label: "Linear decay (per 30 s)", min: 0, max: 10, step: 0.1, value: 1 },
+        { key: "halfLife", label: "Half-life (min, 0 = off)", min: 0, max: 120, step: 1, value: 0 },
+        { key: "sigma", label: "Visibility σ (px)", min: 4, max: 80, step: 1, value: 24 },
+        { key: "kappa", label: "Trail attraction κ", min: 0, max: 8, step: 0.1, value: 2.5 },
+        { key: "inertia", label: "Turning inertia", min: 0, max: 0.95, step: 0.05, value: 0.6 },
+        { key: "wander", label: "Heading noise", min: 0, max: 2, step: 0.05, value: 0, title: "Strength of a random push added to the fox's desired direction (1 = as strong as the pull toward the destination)." },
+        { key: "wanderTime", label: "Noise persistence (s)", min: 0.2, max: 20, step: 0.1, value: 3, log: true, title: "How long a random drift lasts before changing. Short = jitter, long = lazy curves." }
+    ],
+    init() {
+        this.g = createGrid(this.p.cell);
+        this.V = new Float32Array(this.g.n);
+        this.tmpA = new Float32Array(this.g.n);
+        this.tmpB = new Float32Array(this.g.n);
+        this.blurAcc = Infinity;
+    },
+    onLayoutChanged() {
+        rebuildObstacles(this.g);
+    },
+    update(dt) {
+        decayGrid(this.g, dt, this.p.decay, this.p.halfLife);
+        this.blurAcc += dt;
+        if (this.blurAcc >= 1) {
+            this.blurAcc = 0;
+            // Three box passes ≈ a Gaussian of radius r + 0.5 cells.
+            const g = this.g;
+            const r = Math.max(1, Math.round(this.p.sigma / g.cell - 0.5));
+            blurPass(g.level, this.tmpA, g.cols, g.rows, r, true);
+            blurPass(this.tmpA, this.tmpB, g.cols, g.rows, r, false);
+            blurPass(this.tmpB, this.tmpA, g.cols, g.rows, r, true);
+            blurPass(this.tmpA, this.tmpB, g.cols, g.rows, r, false);
+            blurPass(this.tmpB, this.tmpA, g.cols, g.rows, r, true);
+            blurPass(this.tmpA, this.V, g.cols, g.rows, r, false);
+            const inv = 1 / this.p.cap;
+            for (let i = 0; i < g.n; i++) {
+                this.V[i] *= inv;
+            }
+        }
+    },
+    spawn(fox) {
+        const d = Math.hypot(fox.to.x - fox.x, fox.to.y - fox.y) || 1;
+        fox.hx = (fox.to.x - fox.x) / d;
+        fox.hy = (fox.to.y - fox.y) / d;
+        fox.cell = -1;
+        fox.trace = [[fox.x, fox.y]];
+        fox.wx = noiseGauss();
+        fox.wy = noiseGauss();
+    },
+    step(fox, dt) {
+        const P = this.p;
+        const g = this.g;
+        const dx = fox.to.x - fox.x;
+        const dy = fox.to.y - fox.y;
+        const dist = Math.hypot(dx, dy);
+        const speed = BASE_SPEED * (1 + P.k * Math.min(P.cap, g.level[cellAt(g, fox.x, fox.y)]));
+        if (dist <= speed * dt + 0.5) {
+            fox.trace.push([fox.to.x, fox.to.y]);
+            return true;
+        }
+        const ux = dx / dist;
+        const uy = dy / dist;
+        const h = g.cell;
+        const gxv = (sampleField(this.V, g, fox.x + h, fox.y) - sampleField(this.V, g, fox.x - h, fox.y)) / (2 * h);
+        const gyv = (sampleField(this.V, g, fox.x, fox.y + h) - sampleField(this.V, g, fox.x, fox.y - h)) / (2 * h);
+        // Home in on the door, and give up on trails if a trip drags on (so nobody orbits forever).
+        const stuck = sim.t - fox.t0 > (3 * fox.route.chord) / BASE_SPEED;
+        const near = stuck ? 0 : Math.min(1, dist / (2 * P.sigma));
+        const kap = P.kappa * P.sigma * near;
+        // Helbing's fluctuation term: a slowly wandering random push (Ornstein-Uhlenbeck, unit variance per axis).
+        const relax = dt / P.wanderTime;
+        const kick = Math.sqrt(2 * relax);
+        fox.wx += -fox.wx * relax + kick * noiseGauss();
+        fox.wy += -fox.wy * relax + kick * noiseGauss();
+        let ex = ux + kap * gxv + P.wander * near * fox.wx;
+        let ey = uy + kap * gyv + P.wander * near * fox.wy;
+        const R = sim.p.buildingR + 8;
+        for (const b of sim.buildings) {
+            if (b === fox.from || b === fox.to) {
+                continue;
+            }
+            const ox = fox.x - b.x;
+            const oy = fox.y - b.y;
+            const od = Math.hypot(ox, oy) || 1;
+            if (od < R) {
+                ex += (ox / od) * ((R - od) / R) * 4;
+                ey += (oy / od) * ((R - od) / R) * 4;
+            }
+        }
+        const el = Math.hypot(ex, ey) || 1;
+        let hx = fox.hx * P.inertia + (ex / el) * (1 - P.inertia);
+        let hy = fox.hy * P.inertia + (ey / el) * (1 - P.inertia);
+        let hl = Math.hypot(hx, hy) || 1;
+        hx /= hl;
+        hy /= hl;
+        const along = hx * ux + hy * uy;
+        if (along < 0.2) {
+            hx += ux * (0.2 - along) * 1.5;
+            hy += uy * (0.2 - along) * 1.5;
+            hl = Math.hypot(hx, hy) || 1;
+            hx /= hl;
+            hy /= hl;
+        }
+        fox.hx = hx;
+        fox.hy = hy;
+        fox.x = clamp(fox.x + hx * speed * dt, 0, W - 1);
+        fox.y = clamp(fox.y + hy * speed * dt, 0, H - 1);
+        const ci = cellAt(g, fox.x, fox.y);
+        if (ci !== fox.cell) {
+            fox.cell = ci;
+            stampCell(g, ci, P.deposit, P.deposit * P.nbr, P.cap, true);
+        }
+        const lastPt = fox.trace[fox.trace.length - 1];
+        if (Math.abs(lastPt[0] - fox.x) + Math.abs(lastPt[1] - fox.y) > 5) {
+            fox.trace.push([fox.x, fox.y]);
+        }
+        return false;
+    },
+    arrive(fox) {
+        fox.route.lastPath[fox.dir] = fox.trace;
+    },
+    drawGround(ctx) {
+        drawGridField(ctx, this.g, this.g.level, this.p.cap);
+    },
+    probe(x, y) {
+        const L = this.g.level[cellAt(this.g, x, y)];
+        return "level " + L.toFixed(1) + " / " + this.p.cap + "   speed ×" + (1 + this.p.k * Math.min(this.p.cap, L)).toFixed(2) + "\npotential " + sampleField(this.V, this.g, x, y).toFixed(3);
+    },
+    status() {
+        return "Worn area: " + wornArea(this.g, this.p.cap);
+    }
+};
+
+/* ---------- model 3: relaxed polylines (the current game build) ---------- */
+
+function polylineLength(xs, ys) {
+    let len = 0;
+    for (let k = 1; k < xs.length; k++) {
+        len += Math.hypot(xs[k] - xs[k - 1], ys[k] - ys[k - 1]);
+    }
+    return len;
+}
+
+function pointAlong(xs, ys, cum, s) {
+    let k = 0;
+    while (k < cum.length - 2 && cum[k + 1] < s) {
+        k++;
+    }
+    const t = clamp((s - cum[k]) / (cum[k + 1] - cum[k] || 1), 0, 1);
+    return [xs[k] + (xs[k + 1] - xs[k]) * t, ys[k] + (ys[k + 1] - ys[k]) * t];
+}
+
+function tracePolyline(ctx, xs, ys) {
+    const n = xs.length;
+    ctx.moveTo(xs[0], ys[0]);
+    for (let k = 1; k < n - 1; k++) {
+        ctx.quadraticCurveTo(xs[k], ys[k], (xs[k] + xs[k + 1]) / 2, (ys[k] + ys[k + 1]) / 2);
+    }
+    ctx.lineTo(xs[n - 1], ys[n - 1]);
+}
+
+const polyModel = {
+    key: "poly",
+    name: "Relaxed polylines (current game build)",
+    desc: "A port of engine.js: one 22-segment polyline per route. Routes at progress ≥ threshold become trails and pull aligned nearby routes onto themselves (shared trunks); a route's own wear makes it resist the pull and relax toward its own gently meandering line. Each stretch runs at the speed of max(own progress, shared weight × the most-worn trail alongside). Progress is the game's: +deposit per trip, −1 per 30 s, cap 140.",
+    params: [
+        { key: "shared", label: "Shared-trail weight", min: 0, max: 1, step: 0.05, value: 0.5 },
+        { key: "trailAt", label: "Trail threshold", min: 1, max: 60, step: 1, value: 10 },
+        { key: "anchor", label: "Home anchor (× wear)", min: 0, max: 0.5, step: 0.01, value: 0.12 },
+        { key: "capFresh", label: "Detour cap, fresh (%)", min: 0, max: 40, step: 1, value: 12 },
+        { key: "capWorn", label: "Detour cap, worn (%)", min: 0, max: 40, step: 1, value: 6 },
+        { key: "throttle", label: "Relayout every (real ms)", min: 0, max: 3000, step: 100, value: 1000, title: "The game re-solves at most once per real second, so during fast-forward (like offline catch-up) layouts lag. 0 = re-solve on every change." }
+    ],
+    init() {
+        this.levels = new Map();
+        this.trails = [];
+        this.routes = new Map();
+        this.obstacles = [];
+        this.dirty = true;
+        this.lastMs = -Infinity;
+        this.routeCount = -1;
+        this.relayouts = 0;
+        this.relayoutMs = 0;
+    },
+    onLayoutChanged() {
+        this.routes.clear();
+        this.trails = [];
+        this.dirty = true;
+        this.lastMs = -Infinity;
+    },
+    update() {
+        const P = this.p;
+        let dirty = this.routeCount !== sim.routes.length;
+        for (const r of sim.routes) {
+            const wear = clamp(r.progress / GAME_CAP, 0, 1);
+            const snapped = Math.round(wear * 12) / 12;
+            const lv = this.levels.get(r);
+            if (!lv) {
+                this.levels.set(r, { wear: snapped, trail: r.progress >= P.trailAt });
+                dirty = true;
+                continue;
+            }
+            if (snapped !== lv.wear && Math.abs(wear - lv.wear) > 0.06) {
+                lv.wear = snapped;
+                dirty = dirty || lv.trail;
+            }
+            const trail = lv.trail ? r.progress > 0 : r.progress >= P.trailAt;
+            if (lv.trail !== trail) {
+                lv.trail = trail;
+                dirty = true;
+            }
+        }
+        this.routeCount = sim.routes.length;
+        this.dirty = this.dirty || dirty;
+        const now = performance.now();
+        if (this.dirty && now - this.lastMs >= P.throttle) {
+            this.dirty = false;
+            this.lastMs = now;
+            this.compute();
+            this.relayouts++;
+            this.relayoutMs = performance.now() - now;
+        }
+    },
+    compute() {
+        let cold = false;
+        const prevRoutes = this.routes;
+        this.trails = [];
+        for (const r of sim.routes) {
+            if (!this.levels.get(r).trail) {
+                continue;
+            }
+            const trail = this.makeRelax(r);
+            const prev = prevRoutes.get(r);
+            if (prev && prev.xs[0] === trail.xs[0] && prev.ys[0] === trail.ys[0] && prev.xs[SEGS] === trail.xs[SEGS] && prev.ys[SEGS] === trail.ys[SEGS]) {
+                trail.xs = new Float64Array(prev.xs);
+                trail.ys = new Float64Array(prev.ys);
+            } else {
+                cold = true;
+            }
+            this.trails.push(trail);
+        }
+        this.obstacles = sim.buildings.map(b => ({ key: b.key, x: b.x, y: b.y }));
+        this.relax(this.trails, this.trails, this.obstacles, cold ? 40 : 12, cold ? 90 : 35);
+        this.routes = new Map();
+        for (const trail of this.trails) {
+            this.routes.set(trail.route, this.finish(trail));
+        }
+    },
+    getRoute(r) {
+        let route = this.routes.get(r);
+        if (!route) {
+            if (!this.levels.get(r)) {
+                this.levels.set(r, { wear: 0, trail: false });
+            }
+            const relax = this.makeRelax(r);
+            this.relax([relax], this.trails, this.obstacles.length ? this.obstacles : sim.buildings.map(b => ({ key: b.key, x: b.x, y: b.y })), 40, 90);
+            route = this.finish(relax);
+            this.routes.set(r, route);
+        }
+        return route;
+    },
+    makeRelax(r) {
+        const level = this.levels.get(r);
+        const key = r.key;
+        const a = r.a;
+        const b = r.b;
+        let hash = 7;
+        for (let ci = 0; ci < key.length; ci++) {
+            hash = (hash * 31 + key.charCodeAt(ci)) % 1000003;
+        }
+        const chord = Math.hypot(b.x - a.x, b.y - a.y);
+        const amp = Math.min(12, chord * 0.035) * (hash % 2 ? 1 : -1);
+        const phase = (hash % 628) / 100;
+        const nx = -(b.y - a.y) / (chord || 1);
+        const ny = (b.x - a.x) / (chord || 1);
+        const xs = new Float64Array(SEGS + 1);
+        const ys = new Float64Array(SEGS + 1);
+        const restX = new Float64Array(SEGS + 1);
+        const restY = new Float64Array(SEGS + 1);
+        for (let k = 0; k <= SEGS; k++) {
+            const t = k / SEGS;
+            const off = amp * Math.sin(Math.PI * t) * (0.75 + 0.45 * Math.sin(2 * Math.PI * t + phase));
+            restX[k] = nx * off;
+            restY[k] = ny * off;
+            xs[k] = a.x + (b.x - a.x) * t + restX[k];
+            ys[k] = a.y + (b.y - a.y) * t + restY[k];
+        }
+        return {
+            route: r,
+            key: key,
+            fromKey: a.key,
+            toKey: b.key,
+            xs: xs,
+            ys: ys,
+            restX: restX,
+            restY: restY,
+            homeX: new Float64Array(xs),
+            homeY: new Float64Array(ys),
+            anchor: this.p.anchor * level.wear,
+            chord: chord,
+            progress: r.progress,
+            wear: level.wear,
+            pull: level.trail ? 0.35 + 0.65 * level.wear : 0,
+            give: 1 - 0.8 * Math.pow(level.wear, 1.5)
+        };
+    },
+    relax(movers, attractors, obstacles, iters, startRadius) {
+        const cell = 32;
+        let gx0 = Infinity;
+        let gy0 = Infinity;
+        let gx1 = -Infinity;
+        let gy1 = -Infinity;
+        for (const ob of obstacles) {
+            gx0 = Math.min(gx0, ob.x);
+            gy0 = Math.min(gy0, ob.y);
+            gx1 = Math.max(gx1, ob.x);
+            gy1 = Math.max(gy1, ob.y);
+        }
+        gx0 -= 160;
+        gy0 -= 160;
+        const cols = Math.ceil((gx1 + 160 - gx0) / cell);
+        const rows = Math.ceil((gy1 + 160 - gy0) / cell);
+        const grid = [];
+        for (let gi = 0; gi < cols * rows; gi++) {
+            grid.push([]);
+        }
+        for (let it = 0; it < iters; it++) {
+            const radius = startRadius - (startRadius - 20) * (it / (iters - 1));
+            const radius2 = radius * radius;
+            for (let gi = 0; gi < grid.length; gi++) {
+                grid[gi].length = 0;
+            }
+            for (let ai = 0; ai < attractors.length; ai++) {
+                const o = attractors[ai];
+                if (o.pull <= 0) {
+                    continue;
+                }
+                for (let m = 0; m < SEGS; m++) {
+                    const c0 = Math.max(0, Math.floor((Math.min(o.xs[m], o.xs[m + 1]) - radius - gx0) / cell));
+                    const c1 = Math.min(cols - 1, Math.floor((Math.max(o.xs[m], o.xs[m + 1]) + radius - gx0) / cell));
+                    const r0 = Math.max(0, Math.floor((Math.min(o.ys[m], o.ys[m + 1]) - radius - gy0) / cell));
+                    const r1 = Math.min(rows - 1, Math.floor((Math.max(o.ys[m], o.ys[m + 1]) + radius - gy0) / cell));
+                    for (let gr = r0; gr <= r1; gr++) {
+                        for (let gc = c0; gc <= c1; gc++) {
+                            grid[gr * cols + gc].push(ai * SEGS + m);
+                        }
+                    }
+                }
+            }
+            const next = [];
+            for (const r of movers) {
+                const nxs = new Float64Array(r.xs);
+                const nys = new Float64Array(r.ys);
+                for (let k = 1; k < SEGS; k++) {
+                    const px = r.xs[k];
+                    const py = r.ys[k];
+                    let tx = r.xs[k + 1] - r.xs[k - 1];
+                    let ty = r.ys[k + 1] - r.ys[k - 1];
+                    const tl = Math.sqrt(tx * tx + ty * ty) || 1;
+                    tx /= tl;
+                    ty /= tl;
+                    let ax = 0;
+                    let ay = 0;
+                    let aw = 0;
+                    const gc = clamp(Math.floor((px - gx0) / cell), 0, cols - 1);
+                    const gr = clamp(Math.floor((py - gy0) / cell), 0, rows - 1);
+                    const bucket = grid[gr * cols + gc];
+                    for (let bi = 0; bi < bucket.length; bi++) {
+                        const o = attractors[Math.floor(bucket[bi] / SEGS)];
+                        if (o === r) {
+                            continue;
+                        }
+                        const m = bucket[bi] % SEGS;
+                        const x0 = o.xs[m];
+                        const y0 = o.ys[m];
+                        const sx = o.xs[m + 1] - x0;
+                        const sy = o.ys[m + 1] - y0;
+                        const sl2 = sx * sx + sy * sy || 1;
+                        const along = tx * sx + ty * sy;
+                        if (along * along < 0.36 * sl2) {
+                            continue;
+                        }
+                        const u = clamp(((px - x0) * sx + (py - y0) * sy) / sl2, 0, 1);
+                        const dx = x0 + sx * u - px;
+                        const dy = y0 + sy * u - py;
+                        const d2 = dx * dx + dy * dy;
+                        if (d2 > radius2) {
+                            continue;
+                        }
+                        const align = Math.abs(along) / Math.sqrt(sl2);
+                        const w = o.pull * ((align - 0.6) / 0.4) * (1 - Math.sqrt(d2) / radius);
+                        ax += w * dx;
+                        ay += w * dy;
+                        aw += w;
+                    }
+                    let fx = 0.5 * ((r.xs[k - 1] + r.xs[k + 1]) * 0.5 - px + r.restX[k] - (r.restX[k - 1] + r.restX[k + 1]) * 0.5);
+                    let fy = 0.5 * ((r.ys[k - 1] + r.ys[k + 1]) * 0.5 - py + r.restY[k] - (r.restY[k - 1] + r.restY[k + 1]) * 0.5);
+                    if (aw > 0) {
+                        fx += (0.7 * r.give * ax) / (aw + 0.25);
+                        fy += (0.7 * r.give * ay) / (aw + 0.25);
+                    }
+                    fx += r.anchor * (r.homeX[k] - px);
+                    fy += r.anchor * (r.homeY[k] - py);
+                    for (const ob of obstacles) {
+                        if (ob.key === r.fromKey || ob.key === r.toKey) {
+                            continue;
+                        }
+                        const ox = px - ob.x;
+                        const oy = py - ob.y;
+                        if (ox * ox + oy * oy >= 34 * 34) {
+                            continue;
+                        }
+                        const od = Math.sqrt(ox * ox + oy * oy) || 1;
+                        fx += (ox / od) * (34 - od) * 0.5;
+                        fy += (oy / od) * (34 - od) * 0.5;
+                    }
+                    nxs[k] = px + fx;
+                    nys[k] = py + fy;
+                }
+                next.push(nxs, nys);
+            }
+            for (let ri = 0; ri < movers.length; ri++) {
+                movers[ri].xs = next[ri * 2];
+                movers[ri].ys = next[ri * 2 + 1];
+            }
+        }
+    },
+    finish(r) {
+        let length = polylineLength(r.xs, r.ys);
+        const maxLength = r.chord * (1 + this.p.capFresh / 100 - ((this.p.capFresh - this.p.capWorn) / 100) * r.wear);
+        if (length > maxLength) {
+            const x0 = r.xs[0];
+            const y0 = r.ys[0];
+            const x1 = r.xs[SEGS];
+            const y1 = r.ys[SEGS];
+            const bentX = new Float64Array(r.xs);
+            const bentY = new Float64Array(r.ys);
+            for (let t = 0.9; t > 0 && length > maxLength; t -= 0.1) {
+                for (let k = 1; k < SEGS; k++) {
+                    const lx = x0 + (x1 - x0) * (k / SEGS);
+                    const ly = y0 + (y1 - y0) * (k / SEGS);
+                    r.xs[k] = lx + (bentX[k] - lx) * t;
+                    r.ys[k] = ly + (bentY[k] - ly) * t;
+                }
+                length = polylineLength(r.xs, r.ys);
+            }
+        }
+        length = Math.max(1, length);
+        const segLens = new Float64Array(SEGS);
+        const segTrailProgress = new Float64Array(SEGS);
+        const cum = new Float64Array(SEGS + 1);
+        for (let k = 0; k < SEGS; k++) {
+            const mx = (r.xs[k] + r.xs[k + 1]) * 0.5;
+            const my = (r.ys[k] + r.ys[k + 1]) * 0.5;
+            const sx = r.xs[k + 1] - r.xs[k];
+            const sy = r.ys[k + 1] - r.ys[k];
+            const sl = Math.hypot(sx, sy) || 1;
+            let best = 0;
+            for (const o of this.trails) {
+                if (o.key === r.key || o.progress <= best) {
+                    continue;
+                }
+                for (let m = 0; m < SEGS; m++) {
+                    const ox = o.xs[m + 1] - o.xs[m];
+                    const oy = o.ys[m + 1] - o.ys[m];
+                    const ol2 = ox * ox + oy * oy || 1;
+                    const u = clamp(((mx - o.xs[m]) * ox + (my - o.ys[m]) * oy) / ol2, 0, 1);
+                    const d = Math.hypot(o.xs[m] + ox * u - mx, o.ys[m] + oy * u - my);
+                    if (d < 6 && Math.abs(sx * ox + sy * oy) / (sl * Math.sqrt(ol2)) > 0.8) {
+                        best = o.progress;
+                        break;
+                    }
+                }
+            }
+            segLens[k] = sl;
+            segTrailProgress[k] = best;
+            cum[k + 1] = cum[k] + sl;
+        }
+        return { xs: r.xs, ys: r.ys, length: cum[SEGS], segLens: segLens, segTrailProgress: segTrailProgress, cum: cum };
+    },
+    speedMult(r, route) {
+        const progress = clamp(r.progress, 0, GAME_CAP);
+        let time = 0;
+        for (let k = 0; k < SEGS; k++) {
+            time += route.segLens[k] / (1 + GAME_K * Math.max(progress, this.p.shared * Math.min(GAME_CAP, route.segTrailProgress[k])));
+        }
+        return route.length / time;
+    },
+    spawn(fox) {
+        const route = this.getRoute(fox.route);
+        fox.path = route;
+        fox.mult = this.speedMult(fox.route, route);
+        fox.s = 0;
+    },
+    step(fox, dt) {
+        fox.s += BASE_SPEED * fox.mult * dt;
+        const path = fox.path;
+        const p = pointAlong(path.xs, path.ys, path.cum, fox.dir ? path.length - fox.s : fox.s);
+        fox.x = p[0];
+        fox.y = p[1];
+        return fox.s >= path.length;
+    },
+    arrive(fox) {
+        const path = fox.path;
+        const pts = [];
+        for (let k = 0; k <= SEGS; k++) {
+            pts.push([path.xs[k], path.ys[k]]);
+        }
+        fox.route.lastPath[fox.dir] = pts;
+    },
+    drawGround(ctx) {
+        const drawn = sim.routes.filter(r => r.progress > 0).sort((a, b) => a.progress - b.progress);
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        for (const r of drawn) {
+            const route = this.getRoute(r);
+            const wear = 0.15 + 0.85 * clamp(r.progress / GAME_CAP, 0, 1);
+            ctx.strokeStyle = ui.showHeat.checked ? "rgba(249, 142, 9, " + (0.22 + 0.6 * wear) + ")" : "rgba(122, 82, 48, " + (0.22 + 0.6 * wear) + ")";
+            ctx.lineWidth = 3 + 6 * wear;
+            ctx.beginPath();
+            tracePolyline(ctx, route.xs, route.ys);
+            ctx.stroke();
+            if (wear >= 0.4) {
+                ctx.strokeStyle = "rgba(216, 176, 122, " + (wear - 0.3) + ")";
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                tracePolyline(ctx, route.xs, route.ys);
+                ctx.stroke();
+            }
+        }
+    },
+    probe() {
+        return "";
+    },
+    status() {
+        return "Trails: " + this.trails.length + " · relayouts: " + this.relayouts + (this.relayouts ? ", last " + this.relayoutMs.toFixed(1) + " ms" : "");
+    }
+};
+
+/* ---------- model 4: straight lines (the original game) ---------- */
+
+const straightModel = {
+    key: "straight",
+    name: "Straight lines (original game, sanity check)",
+    desc: "The mechanic before desire paths: each route is its own straight road at speed 1 + 0.005·progress. Its 'vs game' ratio should sit at 1.00.",
+    params: [],
+    init() {},
+    onLayoutChanged() {},
+    update() {},
+    spawn(fox) {
+        fox.mult = 1 + GAME_K * Math.min(GAME_CAP, fox.route.progress);
+        fox.s = 0;
+    },
+    step(fox, dt) {
+        fox.s += BASE_SPEED * fox.mult * dt;
+        const t = Math.min(1, fox.s / fox.route.chord);
+        fox.x = fox.from.x + (fox.to.x - fox.from.x) * t;
+        fox.y = fox.from.y + (fox.to.y - fox.from.y) * t;
+        return t >= 1;
+    },
+    arrive(fox) {
+        fox.route.lastPath[fox.dir] = [[fox.from.x, fox.from.y], [fox.to.x, fox.to.y]];
+    },
+    drawGround(ctx) {
+        ctx.lineCap = "round";
+        for (const r of sim.routes) {
+            if (r.progress <= 0) {
+                continue;
+            }
+            const wear = clamp(r.progress / GAME_CAP, 0, 1);
+            ctx.strokeStyle = ui.showHeat.checked ? "rgba(249, 142, 9, " + (0.25 + 0.6 * wear) + ")" : "rgba(122, 82, 48, " + (0.25 + 0.6 * wear) + ")";
+            ctx.lineWidth = 3 + 5 * wear;
+            ctx.beginPath();
+            ctx.moveTo(r.a.x, r.a.y);
+            ctx.lineTo(r.b.x, r.b.y);
+            ctx.stroke();
+        }
+    },
+    probe() {
+        return "";
+    },
+    status() {
+        return "";
+    }
+};
+
+const MODELS = [gridModel, walkerModel, polyModel, straightModel];
+for (const m of MODELS) {
+    m.p = {};
+    for (const p of m.params) {
+        m.p[p.key] = p.value;
+    }
+}
+for (const p of simParams) {
+    sim.p[p.key] = p.value;
+}
+
+/* ---------- UI ---------- */
+
+const ui = {
+    map: document.getElementById("map"),
+    readout: document.getElementById("readout"),
+    methodSelect: document.getElementById("methodSelect"),
+    methodDesc: document.getElementById("methodDesc"),
+    methodParams: document.getElementById("methodParams"),
+    methodStatus: document.getElementById("methodStatus"),
+    simParams: document.getElementById("simParams"),
+    presetSelect: document.getElementById("presetSelect"),
+    pauseBtn: document.getElementById("pauseBtn"),
+    resetBtn: document.getElementById("resetBtn"),
+    clock: document.getElementById("clock"),
+    showFoxes: document.getElementById("showFoxes"),
+    showChords: document.getElementById("showChords"),
+    showHeat: document.getElementById("showHeat"),
+    showCells: document.getElementById("showCells"),
+    chart: document.getElementById("chart"),
+    summary: document.getElementById("summary"),
+    routeRows: document.getElementById("routeRows"),
+    rowCells: []
+};
+const ctx = ui.map.getContext("2d");
+const chartCtx = ui.chart.getContext("2d");
+
+function formatNum(v, step) {
+    const d = step >= 1 ? 0 : Math.min(4, Math.ceil(-Math.log10(step) - 1e-9));
+    return v.toFixed(d);
+}
+
+function buildControls(container, params, values, onChange) {
+    container.textContent = "";
+    for (const p of params) {
+        const row = document.createElement("div");
+        row.className = "row";
+        const label = document.createElement("label");
+        label.textContent = p.label;
+        if (p.title) {
+            label.title = p.title;
+        }
+        const out = document.createElement("span");
+        out.className = "val";
+        let input;
+        if (p.options) {
+            input = document.createElement("select");
+            for (const opt of p.options) {
+                const o = document.createElement("option");
+                o.value = String(opt[0]);
+                o.textContent = opt[1];
+                input.appendChild(o);
+            }
+            input.value = String(values[p.key]);
+            input.addEventListener("change", () => {
+                values[p.key] = p.options.find(o => String(o[0]) === input.value)[0];
+                onChange(p);
+            });
+        } else {
+            input = document.createElement("input");
+            input.type = "range";
+            const fmt = v => (p.fmt ? p.fmt(v) : formatNum(v, p.step));
+            if (p.log) {
+                const lmin = Math.log(p.min);
+                const lmax = Math.log(p.max);
+                input.min = 0;
+                input.max = 1000;
+                input.step = 1;
+                input.value = String(Math.round(((Math.log(values[p.key]) - lmin) / (lmax - lmin)) * 1000));
+                input.addEventListener("input", () => {
+                    const v = Math.max(p.min, Math.round(Math.exp(lmin + ((lmax - lmin) * input.value) / 1000) / p.step) * p.step);
+                    values[p.key] = v;
+                    out.textContent = fmt(v);
+                    onChange(p);
+                });
+            } else {
+                input.min = p.min;
+                input.max = p.max;
+                input.step = p.step;
+                input.value = values[p.key];
+                input.addEventListener("input", () => {
+                    values[p.key] = +input.value;
+                    out.textContent = fmt(+input.value);
+                    onChange(p);
+                });
+            }
+            out.textContent = fmt(values[p.key]);
+        }
+        row.append(label, input, out);
+        container.appendChild(row);
+    }
+}
+
+function selectModel(key) {
+    sim.method = MODELS.find(m => m.key === key);
+    ui.methodDesc.textContent = sim.method.desc;
+    buildControls(ui.methodParams, sim.method.params, sim.method.p, p => {
+        if (p.reset) {
+            resetSim();
+        } else if (sim.method === polyModel) {
+            polyModel.onLayoutChanged();
+        }
+    });
+    resetSim();
+}
+
+function rebuildRouteTable() {
+    ui.routeRows.textContent = "";
+    ui.rowCells = [];
+    sim.routes.forEach((r, i) => {
+        r.color = "hsl(" + ((i * 137.5 + 20) % 360) + ", 75%, 62%)";
+        const tr = document.createElement("tr");
+        tr.className = "route";
+        const name = document.createElement("td");
+        const sw = document.createElement("span");
+        sw.className = "swatch";
+        sw.style.background = r.color;
+        name.append(sw, r.a.name + " ↔ " + r.b.name);
+        const rateTd = document.createElement("td");
+        const rate = document.createElement("input");
+        rate.type = "number";
+        rate.min = 0;
+        rate.step = 0.1;
+        rate.value = r.rate;
+        rate.addEventListener("input", () => {
+            r.rate = Math.max(0, +rate.value || 0);
+        });
+        rateTd.appendChild(rate);
+        const cells = [document.createElement("td"), document.createElement("td"), document.createElement("td"), document.createElement("td")];
+        tr.append(name, rateTd, ...cells);
+        tr.addEventListener("mouseenter", () => {
+            sim.hoverRoute = r;
+        });
+        tr.addEventListener("mouseleave", () => {
+            sim.hoverRoute = null;
+        });
+        ui.routeRows.appendChild(tr);
+        ui.rowCells.push({ route: r, trips: cells[0], prog: cells[1], vsGame: cells[2], vsGrass: cells[3] });
+    });
+}
+
+function ratioCell(td, v, has) {
+    td.textContent = has ? "×" + v.toFixed(2) : "–";
+    td.className = !has ? "" : v < 0.98 ? "good" : v > 1.02 ? "bad" : "";
+}
+
+function formatTime(t) {
+    const h = Math.floor(t / 3600);
+    const m = Math.floor((t % 3600) / 60);
+    const s = Math.floor(t % 60);
+    return (h ? h + "h " : "") + (h || m ? m + "m " : "") + s + "s";
+}
+
+function updateStats() {
+    ui.clock.textContent = formatTime(sim.t) + (sim.lagging ? " (can't keep up)" : "");
+    for (const row of ui.rowCells) {
+        const r = row.route;
+        const has = r.trips > 0;
+        row.trips.textContent = r.trips;
+        row.prog.textContent = r.progress.toFixed(0);
+        ratioCell(row.vsGame, r.emaActual / (r.emaOld || 1), has);
+        ratioCell(row.vsGrass, r.emaActual / (r.chord / BASE_SPEED), has);
+    }
+    const o = overall();
+    ui.summary.innerHTML = "Traffic-weighted trip time: <b class='" + (o.vsGame < 0.98 ? "good" : o.vsGame > 1.02 ? "bad" : "") + "'>×" + o.vsGame.toFixed(3) + "</b> vs original game, <b>×" + o.vsGrass.toFixed(3) + "</b> vs fresh grass · foxes out: " + sim.foxes.length;
+    ui.methodStatus.textContent = sim.method.status();
+    drawChart();
+}
+
+function drawChart() {
+    const c = chartCtx;
+    const w = ui.chart.width;
+    const h = ui.chart.height;
+    c.clearRect(0, 0, w, h);
+    c.fillStyle = "#141a16";
+    c.fillRect(0, 0, w, h);
+    const y = v => h - ((v - 0.5) / 1.0) * h;
+    c.strokeStyle = "#3a463e";
+    c.lineWidth = 1;
+    for (const v of [0.6, 0.8, 1.2, 1.4]) {
+        c.beginPath();
+        c.moveTo(0, y(v));
+        c.lineTo(w, y(v));
+        c.stroke();
+    }
+    c.strokeStyle = "#6c7a6e";
+    c.beginPath();
+    c.moveTo(0, y(1));
+    c.lineTo(w, y(1));
+    c.stroke();
+    c.fillStyle = "#8d977f";
+    c.font = "10px system-ui";
+    c.fillText("×1.0", 2, y(1) - 2);
+    const hist = sim.history;
+    if (hist.length > 1) {
+        for (const [key, color] of [["vsGrass", "#7fc4e8"], ["vsGame", "#f0b060"]]) {
+            c.strokeStyle = color;
+            c.lineWidth = 1.5;
+            c.beginPath();
+            hist.forEach((o, i) => {
+                const x = (i / (hist.length - 1)) * w;
+                if (i) {
+                    c.lineTo(x, y(clamp(o[key], 0.5, 1.5)));
+                } else {
+                    c.moveTo(x, y(clamp(o[key], 0.5, 1.5)));
+                }
+            });
+            c.stroke();
+        }
+    }
+    c.fillStyle = "#f0b060";
+    c.fillText("vs game", w - 100, 11);
+    c.fillStyle = "#7fc4e8";
+    c.fillText("vs grass", w - 50, 11);
+    c.fillStyle = "#8d977f";
+    c.fillText(hist.length ? "last " + formatTime(hist.length * 10) : "", 2, 11);
+}
+
+/* ---------- rendering ---------- */
+
+const grassCanvas = document.createElement("canvas");
+grassCanvas.width = W;
+grassCanvas.height = H;
+(function paintGrass() {
+    const g = grassCanvas.getContext("2d");
+    g.fillStyle = "#5d8743";
+    g.fillRect(0, 0, W, H);
+    for (let i = 0; i < 60; i++) {
+        const x = Math.random() * W;
+        const y = Math.random() * H;
+        const r = 30 + Math.random() * 90;
+        const grad = g.createRadialGradient(x, y, 0, x, y, r);
+        const light = Math.random() < 0.5;
+        grad.addColorStop(0, light ? "rgba(140, 180, 90, 0.18)" : "rgba(40, 80, 40, 0.18)");
+        grad.addColorStop(1, "rgba(0, 0, 0, 0)");
+        g.fillStyle = grad;
+        g.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    for (let i = 0; i < 5000; i++) {
+        g.fillStyle = Math.random() < 0.5 ? "rgba(150, 190, 100, 0.35)" : "rgba(40, 70, 35, 0.35)";
+        g.fillRect(Math.random() * W, Math.random() * H, 1.5, 1.5 + Math.random() * 2);
+    }
+})();
+
+function drawPath(pts, color) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i][0], pts[i][1]);
+    }
+    ctx.strokeStyle = color;
+    ctx.stroke();
+}
+
+function render() {
+    ctx.drawImage(grassCanvas, 0, 0);
+    sim.method.drawGround(ctx);
+    if (ui.showChords.checked) {
+        ctx.setLineDash([3, 5]);
+        ctx.lineWidth = 1;
+        for (const r of sim.routes) {
+            drawPath([[r.a.x, r.a.y], [r.b.x, r.b.y]], "rgba(255, 255, 255, 0.35)");
+        }
+        ctx.setLineDash([]);
+    }
+    const hr = sim.hoverRoute;
+    if (hr) {
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        if (hr.lastPath[0]) {
+            drawPath(hr.lastPath[0], "#5ff");
+        }
+        if (hr.lastPath[1]) {
+            drawPath(hr.lastPath[1], "#f6f");
+        }
+        ctx.setLineDash([]);
+    }
+    const R = sim.p.buildingR;
+    ctx.font = "11px system-ui";
+    ctx.textAlign = "center";
+    for (const b of sim.buildings) {
+        const active = hr && (hr.a === b || hr.b === b);
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, R, 0, Math.PI * 2);
+        ctx.fillStyle = active ? "#f3e6c4" : "#d9c9a3";
+        ctx.fill();
+        ctx.lineWidth = sim.pendingBuilding === b ? 3 : 1.5;
+        ctx.strokeStyle = sim.pendingBuilding === b ? "#ffd84a" : "#5b4630";
+        ctx.stroke();
+        ctx.fillStyle = "#000";
+        ctx.globalAlpha = 0.6;
+        ctx.fillText(b.name, b.x + 1, b.y + R + 12);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#fff";
+        ctx.fillText(b.name, b.x, b.y + R + 11);
+    }
+    if (ui.showFoxes.checked) {
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = "#2a1a0e";
+        for (const f of sim.foxes) {
+            ctx.beginPath();
+            ctx.arc(f.x, f.y, 3, 0, Math.PI * 2);
+            ctx.fillStyle = f.route.color;
+            ctx.fill();
+            ctx.stroke();
+        }
+    }
+}
+
+/* ---------- interaction ---------- */
+
+function mapPoint(e) {
+    const rect = ui.map.getBoundingClientRect();
+    return [((e.clientX - rect.left) * W) / rect.width, ((e.clientY - rect.top) * H) / rect.height];
+}
+
+function buildingAt(x, y) {
+    return sim.buildings.find(b => Math.hypot(b.x - x, b.y - y) <= sim.p.buildingR + 4);
+}
+
+ui.map.addEventListener("mousedown", e => {
+    const [x, y] = mapPoint(e);
+    const b = buildingAt(x, y);
+    if (!b) {
+        sim.pendingBuilding = null;
+        return;
+    }
+    if (!e.shiftKey) {
+        sim.drag = b;
+        return;
+    }
+    if (!sim.pendingBuilding || sim.pendingBuilding === b) {
+        sim.pendingBuilding = sim.pendingBuilding === b ? null : b;
+        return;
+    }
+    const a = sim.pendingBuilding;
+    sim.pendingBuilding = null;
+    const existing = sim.routes.find(r => (r.a === a && r.b === b) || (r.a === b && r.b === a));
+    if (existing) {
+        sim.routes.splice(sim.routes.indexOf(existing), 1);
+        sim.foxes = sim.foxes.filter(f => f.route !== existing);
+    } else {
+        const r = makeRoute(a, b, 1);
+        r.acc = rand();
+        sim.routes.push(r);
+    }
+    layoutChanged();
+    rebuildRouteTable();
+});
+
+ui.map.addEventListener("mousemove", e => {
+    const [x, y] = mapPoint(e);
+    if (sim.drag) {
+        sim.drag.x = clamp(x, 10, W - 10);
+        sim.drag.y = clamp(y, 10, H - 10);
+        layoutChanged();
+    }
+    const b = buildingAt(x, y);
+    ui.map.style.cursor = b ? (e.shiftKey ? "crosshair" : "grab") : "default";
+    ui.readout.textContent = b ? b.name : sim.method.probe(x, y);
+});
+
+window.addEventListener("mouseup", () => {
+    sim.drag = null;
+});
+
+ui.map.addEventListener("mouseleave", () => {
+    ui.readout.textContent = "";
+});
+
+ui.map.addEventListener("dblclick", e => {
+    const [x, y] = mapPoint(e);
+    const b = buildingAt(x, y);
+    if (b) {
+        sim.buildings.splice(sim.buildings.indexOf(b), 1);
+        sim.routes = sim.routes.filter(r => r.a !== b && r.b !== b);
+        sim.foxes = [];
+    } else {
+        const n = sim.nextBuildingId;
+        sim.buildings.push(makeBuilding("added" + n, "Spot " + n, x, y));
+    }
+    sim.pendingBuilding = null;
+    layoutChanged();
+    rebuildRouteTable();
+});
+
+for (const m of MODELS) {
+    const o = document.createElement("option");
+    o.value = m.key;
+    o.textContent = m.name;
+    ui.methodSelect.appendChild(o);
+}
+ui.methodSelect.addEventListener("change", () => selectModel(ui.methodSelect.value));
+
+for (const key of Object.keys(PRESETS)) {
+    const o = document.createElement("option");
+    o.value = key;
+    o.textContent = PRESETS[key].label;
+    ui.presetSelect.appendChild(o);
+}
+ui.presetSelect.addEventListener("change", () => loadPreset(ui.presetSelect.value));
+
+buildControls(ui.simParams, simParams, sim.p, p => {
+    if (p.layout) {
+        layoutChanged();
+    }
+});
+
+ui.pauseBtn.addEventListener("click", () => {
+    sim.paused = !sim.paused;
+    ui.pauseBtn.textContent = sim.paused ? "Play" : "Pause";
+});
+
+ui.resetBtn.addEventListener("click", () => {
+    resetSim();
+    updateStats();
+});
+
+const ffButtons = Array.from(document.querySelectorAll(".ff"));
+for (const btn of ffButtons) {
+    btn.addEventListener("click", () => fastForward(+btn.dataset.ff));
+}
+
+/** Runs `seconds` of sim time in ~30 ms slices so the page stays responsive. */
+function fastForward(seconds) {
+    sim.fastForwarding = true;
+    ffButtons.forEach(b => (b.disabled = true));
+    let steps = Math.round(seconds / DT);
+    const slice = () => {
+        const t0 = performance.now();
+        while (steps > 0 && performance.now() - t0 < 30) {
+            stepSim();
+            steps--;
+        }
+        render();
+        updateStats();
+        if (steps > 0) {
+            ui.clock.textContent = formatTime(sim.t) + " (fast-forwarding…)";
+            setTimeout(slice, 0);
+        } else {
+            sim.fastForwarding = false;
+            ffButtons.forEach(b => (b.disabled = false));
+        }
+    };
+    slice();
+}
+
+let lastFrame = performance.now();
+let lastStats = 0;
+function frame(now) {
+    const realDt = Math.min(0.1, (now - lastFrame) / 1000);
+    lastFrame = now;
+    if (!sim.paused && !sim.fastForwarding) {
+        sim.stepAcc += realDt * sim.p.speed;
+        const t0 = performance.now();
+        sim.lagging = false;
+        while (sim.stepAcc >= DT) {
+            stepSim();
+            sim.stepAcc -= DT;
+            if (performance.now() - t0 > 25) {
+                sim.stepAcc = 0;
+                sim.lagging = true;
+                break;
+            }
+        }
+    }
+    if (!sim.fastForwarding) {
+        render();
+        if (now - lastStats > 250) {
+            lastStats = now;
+            updateStats();
+        }
+    }
+    requestAnimationFrame(frame);
+}
+
+sim.method = gridModel;
+ui.methodSelect.value = "grid";
+selectModel("grid");
+loadPreset("save");
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

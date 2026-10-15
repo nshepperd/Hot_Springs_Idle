@@ -86,10 +86,9 @@
         <div id="menuContent">
             <div id="tabPane_base" class="tab-pane">
                 <div class="pane-title"><span class="pane-title-left"><span class="showthat" onmouseenter="events.refreshKitsuneAssignmentTooltip()"><img class="inline-res-icon" src="img/foxWorker.svg" alt="" draggable="false"> Kitsune <span id="baseWorkersAssigned"></span>/<span id="baseWorkersFound"></span><div id="kitsuneAssignTooltip" class="showthis kitsune-assign-tooltip"><div id="kitsuneAssignTooltipList"></div></div></span><span id="basePaneTitleCoins"> | <img class="inline-res-icon" src="img/coins.svg" alt="" draggable="false">Coins: <span id="baseCoinsText"></span></span><span id="basePaneTitleStarBeads"> | <img class="inline-res-icon" src="img/starBead.svg" alt="" draggable="false">Star Beads: <span id="baseStarBeadsText"></span></span></span><span id="baseBuyableWrap" class="showthat pane-title-buyable" style="display:none" onmouseenter="events.setBuyableTooltipOpen(true)" onmouseleave="events.setBuyableTooltipOpen(false)">Buyable: <span id="baseBuyableCount">0</span><div id="baseBuyableTooltip" class="showthis kitsune-assign-tooltip"><div id="baseBuyableTooltipList"></div></div></span></div>
-                <div id="baseResortMap" class="base-map-wrap">
+                <div id="baseResortMap" class="base-map-wrap" onmousemove="events.onResortMapMouseMove(event)" onmouseleave="events.hideDirtRoadTip()">
                     <div class="resort-map-cave" aria-hidden="true"></div>
-                    <svg id="dirtRoadLayer" class="dirt-road-svg" aria-hidden="true"></svg>
-                    <div id="dirtRoadHoverLayer" class="dirt-road-hover-layer"></div>
+                    <canvas id="dirtRoadLayer" aria-hidden="true" style="position:absolute;inset:0;width:100%;height:100%;z-index:3;pointer-events:none;display:none"></canvas>
                     <div id="dirtRoadMouseTip" class="dirt-road-mouse-tip" style="display:none"></div>
                     <div id="constructionMouseTip" class="dirt-road-mouse-tip" style="display:none"></div>
                     <div id="foxDenQueueTip" class="dirt-road-mouse-tip" style="display:none"></div>

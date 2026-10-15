@@ -810,12 +810,12 @@ var SHRINE_CARD_DEFINITION_ROWS = [
         },
         effectText: function(rarity) {
             if (rarity === "epic") {
-                return "Dirt Road Max Progress: +50; Form Dirt Roads unlocked after prestige";
+                return "Dirt Road Max Wear: +50; Form Dirt Roads unlocked after prestige";
             }
-            return "Dirt Road Max Progress: +10";
+            return "Dirt Road Max Wear: +10";
         },
         totalBonusText: function(totalEffect) {
-            let t = "Dirt Road Max Progress: +" + (totalEffect.dirtRoadMaxProgressFlat || 0);
+            let t = "Dirt Road Max Wear: +" + (totalEffect.dirtRoadMaxProgressFlat || 0);
             if ((totalEffect.prestigeFormDirtRoads || 0) > 0) {
                 t += "; Form Dirt Roads unlocked after prestige";
             }

@@ -43,6 +43,7 @@ let saving = {
     },
     save: function() {
         data.lastVisit = Date.now();
+        engine.storeDirtTrail();
         let sdata = structuredClone(data);
         window.localStorage[saveName] = JSON.stringify(sdata);
     },

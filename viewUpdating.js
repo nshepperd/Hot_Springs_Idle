@@ -11,6 +11,11 @@ let viewData = {
     activeIntruderElements: {},
     intruderRenderCache: {},
     battleScrollRenderPx: 0,
+    dirtRoad: {
+        drawnAtMs: -Infinity,
+        layer: null,
+        pattern: null
+    },
     playerSpriteRender: {
         sheet: null,
         frame: -1,
@@ -68,6 +73,7 @@ let view = {
         if (view.isResortMapVisible()) {
             view.updateActiveWeavingButtons();
             view.updateOkamiMapVisuals();
+            view.updateDirtRoadLayer();
             view.updateFoxDenCarriers();
             view.updateBonfireCarriers();
             view.updateCisternCarriers();
@@ -1696,10 +1702,8 @@ let view = {
             view.updateVal(elId, carrier ? "" : "none", "style.display");
             if (carrier) {
                 const route = engine.getCarrierRoutePoints(carrier);
-                const p = carrier.progress || 0;
-                const x = route.fromX + (route.toX - route.fromX) * p;
-                const y = route.fromY + (route.toY - route.fromY) * p;
-                view.updateVal(elId, view.gpuTranslate(x, y, "translate(-50%, -50%)"), "style.transform");
+                const pos = view.getCarrierMapPoint(carrier);
+                view.updateVal(elId, view.gpuTranslate(pos.x, pos.y, "translate(-50%, -50%)"), "style.transform");
                 const el = viewData.cached[elId];
                 if (el) {
                     const img = el.querySelector(".fox-den-carrier-img");
@@ -1731,10 +1735,8 @@ let view = {
             view.updateVal(elId, carrier ? "" : "none", "style.display");
             if (carrier) {
                 const route = engine.getCarrierRoutePoints(carrier);
-                const p = carrier.progress || 0;
-                const x = route.fromX + (route.toX - route.fromX) * p;
-                const y = route.fromY + (route.toY - route.fromY) * p;
-                view.updateVal(elId, view.gpuTranslate(x, y, "translate(-50%, -50%)"), "style.transform");
+                const pos = view.getCarrierMapPoint(carrier);
+                view.updateVal(elId, view.gpuTranslate(pos.x, pos.y, "translate(-50%, -50%)"), "style.transform");
                 const el = viewData.cached[elId];
                 if (el) {
                     const img = el.querySelector(".bonfire-carrier-img");
@@ -1766,10 +1768,8 @@ let view = {
             view.updateVal(elId, carrier ? "" : "none", "style.display");
             if (carrier) {
                 const route = engine.getCarrierRoutePoints(carrier);
-                const p = carrier.progress || 0;
-                const x = route.fromX + (route.toX - route.fromX) * p;
-                const y = route.fromY + (route.toY - route.fromY) * p;
-                view.updateVal(elId, view.gpuTranslate(x, y, "translate(-50%, -50%)"), "style.transform");
+                const pos = view.getCarrierMapPoint(carrier);
+                view.updateVal(elId, view.gpuTranslate(pos.x, pos.y, "translate(-50%, -50%)"), "style.transform");
                 const el = viewData.cached[elId];
                 if (el) {
                     const img = el.querySelector(".market-carrier-img");
@@ -1807,10 +1807,8 @@ let view = {
             view.updateVal(elId, carrier ? "" : "none", "style.display");
             if (carrier) {
                 const route = engine.getCarrierRoutePoints(carrier);
-                const p = carrier.progress || 0;
-                const x = route.fromX + (route.toX - route.fromX) * p;
-                const y = route.fromY + (route.toY - route.fromY) * p;
-                view.updateVal(elId, view.gpuTranslate(x, y, "translate(-50%, -50%)"), "style.transform");
+                const pos = view.getCarrierMapPoint(carrier);
+                view.updateVal(elId, view.gpuTranslate(pos.x, pos.y, "translate(-50%, -50%)"), "style.transform");
                 const el = viewData.cached[elId];
                 if (el) {
                     const img = el.querySelector(".cistern-carrier-img");
@@ -1848,10 +1846,8 @@ let view = {
             view.updateVal(elId, carrier ? "" : "none", "style.display");
             if (carrier) {
                 const route = engine.getCarrierRoutePoints(carrier);
-                const p = carrier.progress || 0;
-                const x = route.fromX + (route.toX - route.fromX) * p;
-                const y = route.fromY + (route.toY - route.fromY) * p;
-                view.updateVal(elId, view.gpuTranslate(x, y, "translate(-50%, -50%)"), "style.transform");
+                const pos = view.getCarrierMapPoint(carrier);
+                view.updateVal(elId, view.gpuTranslate(pos.x, pos.y, "translate(-50%, -50%)"), "style.transform");
                 const el = viewData.cached[elId];
                 if (el) {
                     const img = el.querySelector(".inn-carrier-img");
@@ -2160,145 +2156,248 @@ let view = {
         view.updateVal("mapShrineProgressWrap", "", "style.display");
         view.updateVal("mapShrineProgressFill", `${pct}%`, "style.width");
     },
+    /**
+     * Desire paths, drawn from the engine's wear grid at full device resolution. The grid is lightly prefiltered,
+     * sampled with a cubic B-spline (smooth, with no grid creases) and cut at a wear threshold. Dividing a pixel's
+     * height above the threshold by the field's slope gives its distance to the path's edge, so edges stay crisp and
+     * anti-aliased and get an even outline however blurry the wear is. Faint wear below the threshold shows as
+     * trampled grass. Wear changes slowly, so this redraws twice a second rather than every frame.
+     */
+    dirtTrailStyle: { edge: 0.2, halo: 0.03, haloAlpha: 0.2, outlinePx: 1.3, rimPx: 2.2 },
     updateDirtRoadLayer: function() {
-        const svg = viewData.cached.dirtRoadLayer || document.getElementById("dirtRoadLayer");
-        if (!svg) {
+        const unlocked = engine.isDirtRoadsUnlocked();
+        view.updateVal("dirtRoadLayer", unlocked ? "" : "none", "style.display");
+        if (!unlocked) {
             return;
         }
-        const hoverLayer = viewData.cached.dirtRoadHoverLayer || document.getElementById("dirtRoadHoverLayer");
-        const unlocked = typeof engine.isDirtRoadsUnlocked === "function" && engine.isDirtRoadsUnlocked();
-        const roads = unlocked && typeof engine.getDirtRoads === "function" ? engine.getDirtRoads() : [];
-        if (!viewData.dirtRoadLineEls) {
-            viewData.dirtRoadLineEls = {};
+        const nowMs = performance.now();
+        if (nowMs - viewData.dirtRoad.drawnAtMs < 500) {
+            return;
         }
-        if (!viewData.dirtRoadHoverEls) {
-            viewData.dirtRoadHoverEls = {};
+        viewData.dirtRoad.drawnAtMs = nowMs;
+        view.drawDirtRoads();
+    },
+    drawDirtRoads: function() {
+        const dr = viewData.dirtRoad;
+        const canvas = viewData.cached.dirtRoadLayer;
+        const ctx = canvas.getContext("2d");
+        const dpr = window.devicePixelRatio || 1;
+        const cw = Math.round(canvas.clientWidth * dpr);
+        const ch = Math.round(canvas.clientHeight * dpr);
+        if (canvas.width !== cw || canvas.height !== ch) {
+            canvas.width = cw;
+            canvas.height = ch;
         }
-        if (!unlocked) {
-            const mouseTip = viewData.cached.dirtRoadMouseTip || document.getElementById("dirtRoadMouseTip");
-            if (mouseTip) {
-                mouseTip.style.display = "none";
+        const trail = engine.getDirtTrail();
+        if (!dr.layer || dr.layer.w !== cw || dr.layer.h !== ch || dr.layer.cols !== trail.cols || dr.layer.rows !== trail.rows) {
+            dr.layer = view.makeDirtTrailLayer(ctx, cw, ch, trail.cell * dpr, trail);
+        }
+        if (!dr.pattern) {
+            dr.pattern = view.makeDirtRoadPattern(ctx);
+        }
+        const layer = dr.layer;
+        const style = view.dirtTrailStyle;
+        const cols = trail.cols;
+        const rows = trail.rows;
+        const pc = layer.pcols;
+        const vals = layer.vals;
+        const raw = layer.raw;
+        const tmp = layer.tmp;
+        const L = trail.levels;
+        for (let r = 0; r < rows; r++) {
+            const src = r * cols;
+            const dst = (r + 2) * pc + 2;
+            for (let c = 0; c < cols; c++) {
+                raw[dst + c] = Math.min(1, L[src + c] / 100);
             }
         }
-        if (!viewData.dirtRoadCoordsLocked) {
-            svg.removeAttribute("viewBox");
-            svg.setAttribute("preserveAspectRatio", "none");
-            viewData.dirtRoadCoordsLocked = true;
+        // A [1 2 1] prefilter cancels the ripple a thin diagonal path leaves on a square grid (its checkerboard frequency).
+        for (let pr = 1; pr < rows + 3; pr++) {
+            for (let o = pr * pc + 1; o < pr * pc + cols + 3; o++) {
+                tmp[o] = 0.25 * (raw[o - 1] + raw[o + 1]) + 0.5 * raw[o];
+            }
         }
-        const svgNs = "http://www.w3.org/2000/svg";
-        const activeRoadKeys = {};
-        for (let i = 0; i < roads.length; i++) {
-            const road = roads[i];
-            const key = engine.getDirtRoadKey(road.fromKey, road.toKey);
-            if (!key || key === "|") {
-                continue;
+        for (let pr = 1; pr < rows + 3; pr++) {
+            for (let o = pr * pc + 1; o < pr * pc + cols + 3; o++) {
+                vals[o] = 0.25 * (tmp[o - pc] + tmp[o + pc]) + 0.5 * tmp[o];
             }
-            activeRoadKeys[key] = true;
-            let line = viewData.dirtRoadLineEls[key];
-            let hotspot = viewData.dirtRoadHoverEls[key];
-            const from = engine.getMapBuildingPosition(road.fromKey);
-            const to = engine.getMapBuildingPosition(road.toKey);
-            if (!line) {
-                line = document.createElementNS(svgNs, "line");
-                line.setAttribute("class", "dirt-road-line");
-                svg.appendChild(line);
-                viewData.dirtRoadLineEls[key] = line;
+        }
+        // A B-spline is a weighted average of its 4x4 taps, so a block whose taps are all below the halo stays empty.
+        const bc = cols + 1;
+        const rowMax = layer.rowMax;
+        for (let pr = 0; pr < rows + 4; pr++) {
+            const o = pr * pc;
+            for (let b = 0; b < bc; b++) {
+                rowMax[pr * bc + b] = Math.max(vals[o + b], vals[o + b + 1], vals[o + b + 2], vals[o + b + 3]);
             }
-            const x1 = String(Math.round(from.x));
-            const y1 = String(Math.round(from.y));
-            const x2 = String(Math.round(to.x));
-            const y2 = String(Math.round(to.y));
-            if (line.getAttribute("x1") !== x1) {
-                line.setAttribute("x1", x1);
-            }
-            if (line.getAttribute("y1") !== y1) {
-                line.setAttribute("y1", y1);
-            }
-            if (line.getAttribute("x2") !== x2) {
-                line.setAttribute("x2", x2);
-            }
-            if (line.getAttribute("y2") !== y2) {
-                line.setAttribute("y2", y2);
-            }
-            const dx = to.x - from.x;
-            const dy = to.y - from.y;
-            const len = Math.max(1, Math.hypot(dx, dy));
-            const angle = Math.atan2(dy, dx) * 180 / Math.PI;
-            if (!hotspot && hoverLayer) {
-                hotspot = document.createElement("div");
-                hotspot.className = "dirt-road-hotspot";
-                const hit = document.createElement("div");
-                hit.className = "dirt-road-hotspot-hit";
-                hit.style.transformOrigin = "left center";
-                hotspot.appendChild(hit);
-                hoverLayer.appendChild(hotspot);
-                viewData.dirtRoadHoverEls[key] = hotspot;
-                view.bindDirtRoadTipEvents(hit);
-            }
-            if (hotspot) {
-                const left = `${Math.round(from.x)}px`;
-                const top = `${Math.round(from.y)}px`;
-                if (hotspot.style.left !== left) {
-                    hotspot.style.left = left;
+        }
+        const d = layer.img.data;
+        d.fill(0);
+        const edge = style.edge;
+        const halo = style.halo;
+        const cellDev = trail.cell * dpr;
+        const outlinePx = style.outlinePx * dpr;
+        const rimPx = style.rimPx * dpr;
+        const cw4 = layer.cw4;
+        const cd4 = layer.cd4;
+        const rw4 = layer.rw4;
+        const rd4 = layer.rd4;
+        for (let bj = 0; bj < rows + 1; bj++) {
+            for (let bi = 0; bi < bc; bi++) {
+                const m = Math.max(rowMax[bj * bc + bi], rowMax[(bj + 1) * bc + bi], rowMax[(bj + 2) * bc + bi], rowMax[(bj + 3) * bc + bi]);
+                if (m < halo) {
+                    continue;
                 }
-                if (hotspot.style.top !== top) {
-                    hotspot.style.top = top;
-                }
-                const hit = hotspot.firstElementChild;
-                if (hit) {
-                    const width = `${len}px`;
-                    const transform = `translate(0, -50%) rotate(${angle}deg)`;
-                    if (hit.style.width !== width) {
-                        hit.style.width = width;
+                const tapBase = bj * pc + bi;
+                for (let py = layer.rowStart[bj]; py < layer.rowStart[bj + 1]; py++) {
+                    const y0 = rw4[py * 4], y1 = rw4[py * 4 + 1], y2 = rw4[py * 4 + 2], y3 = rw4[py * 4 + 3];
+                    const e0 = rd4[py * 4], e1 = rd4[py * 4 + 1], e2 = rd4[py * 4 + 2], e3 = rd4[py * 4 + 3];
+                    for (let px = layer.colStart[bi]; px < layer.colStart[bi + 1]; px++) {
+                        const x0 = cw4[px * 4], x1 = cw4[px * 4 + 1], x2 = cw4[px * 4 + 2], x3 = cw4[px * 4 + 3];
+                        const q0 = cd4[px * 4], q1 = cd4[px * 4 + 1], q2 = cd4[px * 4 + 2], q3 = cd4[px * 4 + 3];
+                        let o = tapBase;
+                        let rv = vals[o] * x0 + vals[o + 1] * x1 + vals[o + 2] * x2 + vals[o + 3] * x3;
+                        let rd = vals[o] * q0 + vals[o + 1] * q1 + vals[o + 2] * q2 + vals[o + 3] * q3;
+                        let v = y0 * rv, gx = y0 * rd, gy = e0 * rv;
+                        o += pc;
+                        rv = vals[o] * x0 + vals[o + 1] * x1 + vals[o + 2] * x2 + vals[o + 3] * x3;
+                        rd = vals[o] * q0 + vals[o + 1] * q1 + vals[o + 2] * q2 + vals[o + 3] * q3;
+                        v += y1 * rv; gx += y1 * rd; gy += e1 * rv;
+                        o += pc;
+                        rv = vals[o] * x0 + vals[o + 1] * x1 + vals[o + 2] * x2 + vals[o + 3] * x3;
+                        rd = vals[o] * q0 + vals[o + 1] * q1 + vals[o + 2] * q2 + vals[o + 3] * q3;
+                        v += y2 * rv; gx += y2 * rd; gy += e2 * rv;
+                        o += pc;
+                        rv = vals[o] * x0 + vals[o + 1] * x1 + vals[o + 2] * x2 + vals[o + 3] * x3;
+                        rd = vals[o] * q0 + vals[o + 1] * q1 + vals[o + 2] * q2 + vals[o + 3] * q3;
+                        v += y3 * rv; gx += y3 * rd; gy += e3 * rv;
+                        if (v < halo) {
+                            continue;
+                        }
+                        // Signed distance to the edge in device pixels, positive inside the path.
+                        const dist = ((v - edge) * cellDev) / Math.sqrt(gx * gx + gy * gy + 1e-6);
+                        const p = (py * cw + px) * 4;
+                        let h = Math.min(1, (v - halo) / (edge - halo));
+                        h = style.haloAlpha * h * h * (3 - 2 * h);
+                        const dirtA = Math.max(0, Math.min(1, dist + 0.5));
+                        const lineA = 0.55 * Math.max(0, Math.min(1, (dist + outlinePx) + 0.5)) * (1 - dirtA);
+                        // Packed centre is lighter; an even darker rim just inside the edge.
+                        let s = Math.max(0, (v - edge) / (1 - edge));
+                        s = s * s * (3 - 2 * s);
+                        const shade = 1 - 0.22 * Math.max(0, Math.min(1, 1 - dist / rimPx));
+                        const dirtR = (110 + 58 * s) * shade, dirtG = (78 + 54 * s) * shade, dirtB = (46 + 44 * s) * shade;
+                        // Composite back to front: trampled grass, outline, dirt.
+                        let a = h, r = 104 * h, g = 112 * h, b = 56 * h;
+                        r = 46 * lineA + r * (1 - lineA); g = 32 * lineA + g * (1 - lineA); b = 18 * lineA + b * (1 - lineA); a = lineA + a * (1 - lineA);
+                        r = dirtR * dirtA + r * (1 - dirtA); g = dirtG * dirtA + g * (1 - dirtA); b = dirtB * dirtA + b * (1 - dirtA); a = dirtA + a * (1 - dirtA);
+                        d[p] = r / a;
+                        d[p + 1] = g / a;
+                        d[p + 2] = b / a;
+                        d[p + 3] = 255 * a;
                     }
-                    if (hit.style.transform !== transform) {
-                        hit.style.transform = transform;
-                    }
-                }
-            }
-            const roadCap = engine.getDirtRoadMaxProgress();
-            const progress = Math.max(0, Math.min(roadCap, road.progress || 0));
-            let opacity = 0;
-            if (progress >= 1) {
-                opacity = 0.2 + 0.8 * ((progress - 1) / Math.max(1, roadCap - 1));
-            }
-            if (line._dirtRoadOpacity !== opacity) {
-                line._dirtRoadOpacity = opacity;
-                line.setAttribute("stroke-opacity", String(opacity));
-            }
-            if (hotspot) {
-                const showTip = progress > 0;
-                hotspot.style.display = showTip ? "" : "none";
-                if (showTip) {
-                    const remainMs = Math.max(0, 30000 - (road.decayAccMs || 0));
-                    hotspot._dirtRoadTipHtml = `${progress} / ${roadCap}<br>+${round1(progress * 0.5)}% speed<br>${Math.ceil(remainMs / 1000)}s to next decrease`;
                 }
             }
         }
-        const staleLineKeys = Object.keys(viewData.dirtRoadLineEls);
-        for (let si = 0; si < staleLineKeys.length; si++) {
-            const staleKey = staleLineKeys[si];
-            if (activeRoadKeys[staleKey]) {
-                continue;
+        ctx.putImageData(layer.img, 0, 0);
+        // Speckles only where there is dirt.
+        ctx.globalCompositeOperation = "source-atop";
+        ctx.globalAlpha = 0.8;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.fillStyle = dr.pattern;
+        ctx.fillRect(0, 0, cw / dpr, ch / dpr);
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "source-over";
+    },
+    /**
+     * Per-pixel B-spline weights and derivative weights into the (prefiltered) wear grid, padded by 2 cells of zeros, and which
+     * pixels fall in each block between cell centres. `cellDev`: one grid cell in device pixels.
+     */
+    makeDirtTrailLayer: function(ctx, w, h, cellDev, trail) {
+        const pcols = trail.cols + 4;
+        const layer = { img: ctx.createImageData(w, h), w: w, h: h, cols: trail.cols, rows: trail.rows, pcols: pcols, vals: new Float32Array(pcols * (trail.rows + 4)), raw: new Float32Array(pcols * (trail.rows + 4)), tmp: new Float32Array(pcols * (trail.rows + 4)), rowMax: new Float32Array((trail.cols + 1) * (trail.rows + 4)) };
+        const axis = function(n, cells) {
+            const wts = new Float32Array(n * 4);
+            const ders = new Float32Array(n * 4);
+            const start = new Int32Array(cells + 2).fill(n);
+            for (let i = n - 1; i >= 0; i--) {
+                const u = (i + 0.5) / cellDev - 0.5;
+                const k = Math.max(-1, Math.min(cells - 1, Math.floor(u)));
+                const t = Math.max(0, Math.min(1, u - k));
+                const it = 1 - t;
+                wts[i * 4] = (it * it * it) / 6;
+                wts[i * 4 + 1] = (3 * t * t * t - 6 * t * t + 4) / 6;
+                wts[i * 4 + 2] = (-3 * t * t * t + 3 * t * t + 3 * t + 1) / 6;
+                wts[i * 4 + 3] = (t * t * t) / 6;
+                ders[i * 4] = (-it * it) / 2;
+                ders[i * 4 + 1] = (3 * t * t - 4 * t) / 2;
+                ders[i * 4 + 2] = (-3 * t * t + 2 * t + 1) / 2;
+                ders[i * 4 + 3] = (t * t) / 2;
+                for (let b = 0; b <= k + 1; b++) {
+                    start[b] = Math.min(start[b], i);
+                }
             }
-            const staleLine = viewData.dirtRoadLineEls[staleKey];
-            if (staleLine && staleLine.parentNode) {
-                staleLine.parentNode.removeChild(staleLine);
-            }
-            delete viewData.dirtRoadLineEls[staleKey];
+            return { wts: wts, ders: ders, start: start };
+        };
+        const cx = axis(w, trail.cols);
+        const cy = axis(h, trail.rows);
+        layer.cw4 = cx.wts;
+        layer.cd4 = cx.ders;
+        layer.colStart = cx.start;
+        layer.rw4 = cy.wts;
+        layer.rd4 = cy.ders;
+        layer.rowStart = cy.start;
+        return layer;
+    },
+    makeDirtRoadPattern: function(ctx) {
+        const tile = document.createElement("canvas");
+        tile.width = 96;
+        tile.height = 96;
+        const tctx = tile.getContext("2d");
+        let seed = 9173;
+        const rand = function() {
+            seed = (seed * 16807) % 2147483647;
+            return seed / 2147483647;
+        };
+        for (let i = 0; i < 420; i++) {
+            const shade = rand();
+            tctx.fillStyle = shade < 0.5 ? `rgba(58, 36, 18, ${0.25 + rand() * 0.35})` : `rgba(176, 132, 84, ${0.2 + rand() * 0.3})`;
+            const r = 0.6 + rand() * 1.6;
+            tctx.beginPath();
+            tctx.arc(rand() * 96, rand() * 96, r, 0, Math.PI * 2);
+            tctx.fill();
         }
-        const staleHoverKeys = Object.keys(viewData.dirtRoadHoverEls);
-        for (let hi = 0; hi < staleHoverKeys.length; hi++) {
-            const staleKey = staleHoverKeys[hi];
-            if (activeRoadKeys[staleKey]) {
-                continue;
-            }
-            const staleHover = viewData.dirtRoadHoverEls[staleKey];
-            if (staleHover && staleHover.parentNode) {
-                staleHover.parentNode.removeChild(staleHover);
-            }
-            delete viewData.dirtRoadHoverEls[staleKey];
+        return ctx.createPattern(tile, "repeat");
+    },
+    /** Where a carrier stands: its walker position once dirt paths exist, else along the straight line. */
+    getCarrierMapPoint: function(carrier) {
+        if (carrier.trailX !== undefined) {
+            return { x: carrier.trailX, y: carrier.trailY };
         }
+        const p = carrier.progress || 0;
+        const route = engine.getCarrierRoutePoints(carrier);
+        return { x: route.fromX + (route.toX - route.fromX) * p, y: route.fromY + (route.toY - route.fromY) * p };
+    },
+    getDirtRoadTipHtml: function(level) {
+        const cap = engine.getDirtRoadMaxProgress();
+        return `Dirt path: ${Math.round(level)} / ${cap} wear<br>+${round1(0.5 * Math.min(cap, level))}% speed, fades 1 per 30s`;
+    },
+    showDirtRoadTip: function(e) {
+        const tip = viewData.cached.dirtRoadMouseTip;
+        const map = viewData.cached.baseResortMap;
+        const rect = map.getBoundingClientRect();
+        const level = e.target === map && engine.isDirtRoadsUnlocked() ? engine.getDirtTrailLevelAt(e.clientX - rect.left, e.clientY - rect.top) : 0;
+        if (level < 2) {
+            tip.style.display = "none";
+            return;
+        }
+        const html = view.getDirtRoadTipHtml(level);
+        if (tip._dirtRoadTipHtml !== html) {
+            tip._dirtRoadTipHtml = html;
+            tip.innerHTML = html;
+        }
+        tip.style.display = "block";
+        view.positionResortMapMouseTip(tip, e);
     },
     bindFoxDenQueueTip: function() {
         const btn = viewData.cached.baseBuilding_foxDen || document.getElementById("baseBuilding_foxDen");
@@ -2433,33 +2532,8 @@ let view = {
             left = maxLeft;
         }
         tip.style.left = `${left}px`;
-        tip.style.top = `${mapY + 12}px`;
-    },
-    bindDirtRoadTipEvents: function(hit) {
-        if (!hit || hit._dirtRoadTipBound) {
-            return;
-        }
-        hit._dirtRoadTipBound = true;
-        hit.addEventListener("mousemove", function(e) {
-            const tip = viewData.cached.dirtRoadMouseTip || document.getElementById("dirtRoadMouseTip");
-            const hotspot = hit.parentElement;
-            if (!tip || !hotspot) {
-                return;
-            }
-            const html = hotspot._dirtRoadTipHtml || "";
-            if (tip._dirtRoadTipHtml !== html) {
-                tip._dirtRoadTipHtml = html;
-                tip.innerHTML = html;
-            }
-            tip.style.display = "block";
-            view.positionResortMapMouseTip(tip, e);
-        });
-        hit.addEventListener("mouseleave", function() {
-            const tip = viewData.cached.dirtRoadMouseTip || document.getElementById("dirtRoadMouseTip");
-            if (tip) {
-                tip.style.display = "none";
-            }
-        });
+        const below = mapY + 12;
+        tip.style.top = `${below + tip.offsetHeight > rect.height - 4 ? Math.max(4, mapY - tip.offsetHeight - 12) : below}px`;
     },
     getConstructionSiteTipHtml: function(unlockKey) {
         const site = engine.getFoxDenConstructionSite(unlockKey);
@@ -2543,7 +2617,9 @@ let view = {
         view.updateOrbProgressDisplays();
         view.updateShrineProgressDisplays();
         view.updateMarketProgressDisplays();
-        view.updateDirtRoadLayer();
+        if (viewData.cached.dirtRoadLayer.width !== Math.round(viewData.cached.dirtRoadLayer.clientWidth * (window.devicePixelRatio || 1))) {
+            viewData.dirtRoad.drawnAtMs = -Infinity;
+        }
         view.updateMapBuildingManaBar("inn", "mapInnManaProgressWrap", "mapInnManaProgressFill");
         view.updateMapBuildingManaBar("torii", "mapToriiManaProgressWrap", "mapToriiManaProgressFill");
         view.updateMapWaterBar(engine.isToriiDrinkingBowlUnlocked(), torii.water || 0, engine.getToriiWaterCapacity(), "mapToriiWaterProgressWrap", "mapToriiWaterProgressFill");
