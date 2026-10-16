@@ -78,9 +78,25 @@ let battleBackdrop = {
         }
         const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
         scene.dpr = dpr;
-        canvas.width = Math.round(W * dpr);
-        canvas.height = Math.round(H * dpr);
+        battleBackdrop.sizeCanvas(canvas, scene);
         battleBackdrop.scene = scene;
+    },
+    /**
+     * Backing store at W x H * dpr, and a fixed W x H CSS box: intruder tokens are placed in gameData battlefield
+     * px, and the battlefield's inner box can be narrower (column padding caps it), so stretching to 100% would
+     * drift the canopy outlines away from their sprites toward the right edge.
+     */
+    sizeCanvas: function(canvas, scene) {
+        const pxW = Math.round(scene.W * scene.dpr);
+        const pxH = Math.round(scene.H * scene.dpr);
+        if (canvas.width !== pxW || canvas.height !== pxH) {
+            canvas.width = pxW;
+            canvas.height = pxH;
+        }
+        if (canvas.style.width !== `${scene.W}px` || canvas.style.height !== `${scene.H}px`) {
+            canvas.style.width = `${scene.W}px`;
+            canvas.style.height = `${scene.H}px`;
+        }
     },
 
     render: function(canvas, scrollPx, nowMs) {
@@ -127,10 +143,7 @@ let battleBackdrop = {
         const W = scene.W;
         const H = scene.H;
         const dpr = scene.dpr;
-        if (canvas.width !== Math.round(W * dpr) || canvas.height !== Math.round(H * dpr)) {
-            canvas.width = Math.round(W * dpr);
-            canvas.height = Math.round(H * dpr);
-        }
+        battleBackdrop.sizeCanvas(canvas, scene);
         const ctx = canvas.getContext("2d");
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         ctx.clearRect(0, 0, W, H);
